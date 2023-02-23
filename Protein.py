@@ -17,41 +17,48 @@ import time
 
 class Protein:
     def __init__(self, uniprot_id:str) -> None:
+        self.__smiles_col_name = 'SMILES'
+        
         self.uniprot = uniprot_id
-        self.concise_dfs = []
+        
+        self.concise_assay_dfs = []
         self.sid_records = []
         self.cids = []
         self.smiles = []
         
         self.assay_ids = self.__get_assay_ids()
-        self.__set_concise_dfs()
+        self.__set_concise_assay_dfs()
         self.__set_sid_records()
         self.__cids_from_sid_records()
         self.__set_smiles()
         self.__add_smiles_to_dfs()
         
-        self.df = pd.concat(self.concise_dfs)
+        self.df = pd.concat(self.concise_assay_dfs)
+        self.df.reset_index(drop=True, inplace=True)
+        
+        smiles_col = self.df.pop(self.__smiles_col_name)
+        self.df.insert(0, self.__smiles_col_name, smiles_col)
     
     @staticmethod
-    def get_assay_ids(uniprot:str):
+    def get_assay_ids(uniprot:str) -> list:
         url = f'https://pubchem.ncbi.nlm.nih.gov/rest/pug/bioassay/target/ProteinName/{uniprot}/aids/JSON'
         response = requests.get(url)
         return response.json()['IdentifierList']['AID']
     
-    def __get_assay_ids(self):
+    def __get_assay_ids(self) -> list:
         return Protein.get_assay_ids(self.uniprot)
     
     @staticmethod
-    def get_assay_concise(assay_id:Union[int, str]) -> pd.DataFrame:
+    def get_concise_assay_dfs(assay_id:Union[int, str]) -> pd.DataFrame:
         url = f'https://pubchem.ncbi.nlm.nih.gov/rest/pug/bioassay/aid/{assay_id}/concise/JSON'
         response = requests.get(url)
         json = response.json()['Table']
         rows = [row['Cell'] for row in json['Row']]
         return pd.DataFrame(rows, columns=json['Columns']['Column'])
 
-    def __set_concise_dfs(self):
+    def __set_concise_assay_dfs(self):
         for aid in self.assay_ids:
-            self.concise_dfs.append(Protein.get_assay_concise(aid))
+            self.concise_assay_dfs.append(Protein.get_concise_assay_dfs(aid))
             time.sleep(0.5)
             
     @staticmethod
@@ -62,7 +69,7 @@ class Protein:
         return response.json()['PC_Substances']
     
     def __set_sid_records(self):
-        for df in self.concise_dfs:
+        for df in self.concise_assay_dfs:
             self.sid_records.append(Protein.get_sid_records(df['SID'].tolist()))
             time.sleep(0.5)
     
@@ -86,8 +93,8 @@ class Protein:
             time.sleep(0.5)
             
     def __add_smiles_to_dfs(self):
-        for df, smiles in zip(self.concise_dfs, self.smiles):
-            df['SMILES'] = smiles
+        for df, smiles in zip(self.concise_assay_dfs, self.smiles):
+            df[self.__smiles_col_name] = smiles
     
     
 if __name__ == '__main__':
