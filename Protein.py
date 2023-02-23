@@ -62,7 +62,7 @@ class Protein:
         rows = [row['Cell'] for row in json['Row']]
         return pd.DataFrame(rows, columns=json['Columns']['Column'])
 
-    def __set_concise_assay_dfs(self):
+    def __set_concise_assay_dfs(self) -> None:
         for aid in self.assay_ids:
             self.concise_assay_dfs.append(Protein.get_concise_assay_dfs(aid))
             time.sleep(0.5)
