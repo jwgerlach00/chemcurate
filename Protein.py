@@ -38,6 +38,12 @@ class Protein:
         
         smiles_col = self.df.pop(self.__smiles_col_name)
         self.df.insert(0, self.__smiles_col_name, smiles_col)
+        
+    def __str__(self) -> str:
+        return str(self.df)
+    
+    def __len__(self) -> int:
+        return len(self.df)
     
     @staticmethod
     def get_assay_ids(uniprot:str) -> list:
@@ -62,37 +68,37 @@ class Protein:
             time.sleep(0.5)
             
     @staticmethod
-    def get_sid_records(sids):
+    def get_sid_records(sids) -> dict:
         sids_str = ','.join(sids)
         url = f'https://pubchem.ncbi.nlm.nih.gov/rest/pug/substance/sid/{sids_str}/record/JSON'
         response = requests.get(url)
         return response.json()['PC_Substances']
     
-    def __set_sid_records(self):
+    def __set_sid_records(self) -> None:
         for df in self.concise_assay_dfs:
             self.sid_records.append(Protein.get_sid_records(df['SID'].tolist()))
             time.sleep(0.5)
     
     @staticmethod
-    def cids_from_sid_record(record):
+    def cids_from_sid_record(record) -> list:
         return [sid['compound'][-1]['id']['id']['cid'] for sid in record]
     
-    def __cids_from_sid_records(self):
+    def __cids_from_sid_records(self) -> None:
         self.cids = [Protein.cids_from_sid_record(df_sid_record) for df_sid_record in self.sid_records]
         
     @staticmethod
-    def get_smiles_from_cids(cids):
+    def get_smiles_from_cids(cids) -> list:
         cids_str = ','.join([str(c) for c in cids])
         url = f'https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/{cids_str}/property/CanonicalSMILES/JSON'
         response = requests.get(url)
         return response.json()['PropertyTable']['Properties'][0]['CanonicalSMILES']
     
-    def __set_smiles(self):
+    def __set_smiles(self) -> None:
         for cids in self.cids:
             self.smiles.append(Protein.get_smiles_from_cids(cids))
             time.sleep(0.5)
             
-    def __add_smiles_to_dfs(self):
+    def __add_smiles_to_dfs(self) -> None:
         for df, smiles in zip(self.concise_assay_dfs, self.smiles):
             df[self.__smiles_col_name] = smiles
     
@@ -100,4 +106,5 @@ class Protein:
 if __name__ == '__main__':
     uniprot_id = 'P50129'
     protein = Protein(uniprot_id)
-    print(protein.df)
+    print(protein)
+    print(len(protein))
