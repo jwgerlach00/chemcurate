@@ -15,11 +15,11 @@ import time
 #     return response.text
 
 
-class Protein:
-    def __init__(self, uniprot_id:str) -> None:
+class PubChem:
+    def __init__(self, uniprot_ids:list) -> None:
         self.__smiles_col_name = 'SMILES'
         
-        self.uniprot = uniprot_id
+        self.uniprot_ids = uniprot_ids
         
         self.concise_assay_dfs = []
         self.sid_records = []
@@ -46,13 +46,13 @@ class Protein:
         return len(self.df)
     
     @staticmethod
-    def get_assay_ids(uniprot:str) -> list:
-        url = f'https://pubchem.ncbi.nlm.nih.gov/rest/pug/bioassay/target/ProteinName/{uniprot}/aids/JSON'
+    def get_assay_ids(uniprot_ids:list) -> list:
+        url = 'https://pubchem.ncbi.nlm.nih.gov/rest/pug/bioassay/target/ProteinName/{0}/aids/JSON'.format(','.join(uniprot_ids))
         response = requests.get(url)
         return response.json()['IdentifierList']['AID']
     
     def __get_assay_ids(self) -> list:
-        return Protein.get_assay_ids(self.uniprot)
+        return PubChem.get_assay_ids(self.uniprot_ids)
     
     @staticmethod
     def get_concise_assay_dfs(assay_id:Union[int, str]) -> pd.DataFrame:
@@ -64,7 +64,7 @@ class Protein:
 
     def __set_concise_assay_dfs(self) -> None:
         for aid in self.assay_ids:
-            self.concise_assay_dfs.append(Protein.get_concise_assay_dfs(aid))
+            self.concise_assay_dfs.append(PubChem.get_concise_assay_dfs(aid))
             time.sleep(0.5)
             
     @staticmethod
@@ -76,7 +76,7 @@ class Protein:
     
     def __set_sid_records(self) -> None:
         for df in self.concise_assay_dfs:
-            self.sid_records.append(Protein.get_sid_records(df['SID'].tolist()))
+            self.sid_records.append(PubChem.get_sid_records(df['SID'].tolist()))
             time.sleep(0.5)
     
     @staticmethod
@@ -84,7 +84,7 @@ class Protein:
         return [sid['compound'][-1]['id']['id']['cid'] for sid in record]
     
     def __cids_from_sid_records(self) -> None:
-        self.cids = [Protein.cids_from_sid_record(df_sid_record) for df_sid_record in self.sid_records]
+        self.cids = [PubChem.cids_from_sid_record(df_sid_record) for df_sid_record in self.sid_records]
         
     @staticmethod
     def get_smiles_from_cids(cids) -> list:
@@ -95,7 +95,7 @@ class Protein:
     
     def __set_smiles(self) -> None:
         for cids in self.cids:
-            self.smiles.append(Protein.get_smiles_from_cids(cids))
+            self.smiles.append(PubChem.get_smiles_from_cids(cids))
             time.sleep(0.5)
             
     def __add_smiles_to_dfs(self) -> None:
@@ -104,7 +104,7 @@ class Protein:
     
     
 if __name__ == '__main__':
-    uniprot_id = 'P50129'
-    protein = Protein(uniprot_id)
-    print(protein)
-    print(len(protein))
+    uniprot_ids = ['P22303'] #['P50129', 'P10100']
+    pc = PubChem(uniprot_ids)
+    print(pc)
+    print(len(pc))
