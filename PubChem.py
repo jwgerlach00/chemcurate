@@ -16,6 +16,8 @@ import time
 
 
 class PubChem:
+    url_stem = 'https://pubchem.ncbi.nlm.nih.gov/rest/pug'
+    
     def __init__(self, uniprot_ids:list) -> None:
         self.__smiles_col_name = 'SMILES'
         
@@ -47,8 +49,9 @@ class PubChem:
     
     @staticmethod
     def get_assay_ids(uniprot_ids:list) -> list:
-        url = 'https://pubchem.ncbi.nlm.nih.gov/rest/pug/bioassay/target/ProteinName/{0}/aids/JSON'.format(','.join(uniprot_ids))
+        url = '{0}/bioassay/target/ProteinName/{1}/aids/JSON'.format(PubChem.url_stem, ','.join(uniprot_ids))
         response = requests.get(url)
+        print(response.json())
         return response.json()['IdentifierList']['AID']
     
     def __get_assay_ids(self) -> list:
@@ -56,7 +59,7 @@ class PubChem:
     
     @staticmethod
     def get_concise_assay_dfs(assay_id:Union[int, str]) -> pd.DataFrame:
-        url = f'https://pubchem.ncbi.nlm.nih.gov/rest/pug/bioassay/aid/{assay_id}/concise/JSON'
+        url = f'{PubChem.url_stem}/bioassay/aid/{assay_id}/concise/JSON'
         response = requests.get(url)
         json = response.json()['Table']
         rows = [row['Cell'] for row in json['Row']]
@@ -70,7 +73,7 @@ class PubChem:
     @staticmethod
     def get_sid_records(sids) -> dict:
         sids_str = ','.join(sids)
-        url = f'https://pubchem.ncbi.nlm.nih.gov/rest/pug/substance/sid/{sids_str}/record/JSON'
+        url = f'{PubChem.url_stem}/substance/sid/{sids_str}/record/JSON'
         response = requests.get(url)
         return response.json()['PC_Substances']
     
@@ -89,7 +92,7 @@ class PubChem:
     @staticmethod
     def get_smiles_from_cids(cids) -> list:
         cids_str = ','.join([str(c) for c in cids])
-        url = f'https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/{cids_str}/property/CanonicalSMILES/JSON'
+        url = f'{PubChem.url_stem}/compound/cid/{cids_str}/property/CanonicalSMILES/JSON'
         response = requests.get(url)
         return response.json()['PropertyTable']['Properties'][0]['CanonicalSMILES']
     
@@ -104,7 +107,8 @@ class PubChem:
     
     
 if __name__ == '__main__':
-    uniprot_ids = ['P22303'] #['P50129', 'P10100']
+    # uniprot_ids = ['P22303'] #['P50129', 'P10100']
+    uniprot_ids = ['P50129']
     pc = PubChem(uniprot_ids)
     print(pc)
     print(len(pc))
