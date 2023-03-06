@@ -1,0 +1,13 @@
+setup.py
+src/assets/__init__.py
+src/assets/uniprot_mapping.yaml
+src/assets/write_all_uniprot_mapper.py
+src/chemcurate/Chembl.py
+src/chemcurate/PubChem.py
+src/chemcurate/__asset_loader.py
+src/chemcurate/__init__.py
+src/chemcurate.egg-info/PKG-INFO
+src/chemcurate.egg-info/SOURCES.txt
+src/chemcurate.egg-info/dependency_links.txt
+src/chemcurate.egg-info/requires.txt
+src/chemcurate.egg-info/top_level.txt

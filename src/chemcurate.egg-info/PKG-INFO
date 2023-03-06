@@ -1,0 +1,11 @@
+Metadata-Version: 1.2
+Name: chemcurate
+Version: 0.0.1
+Summary: Autocuration of small-molecule data from databases.
+Home-page: https://github.com/jwgerlach00/chemcurate
+Author: Jacob Gerlach
+Author-email: jwgerlach00@gmail.com
+License: MIT
+Description: UNKNOWN
+Platform: UNKNOWN
+Requires-Python: >=3.7
