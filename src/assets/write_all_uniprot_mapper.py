@@ -66,8 +66,8 @@ def get_batch(batch_url):
 
 
 if __name__ == '__main__':
-    url = 'https://rest.uniprot.org/uniprotkb/search?fields=accession,protein_name,organism_name&format=json&query=(reviewed:true) \
-        &size=500'
+    url = 'https://rest.uniprot.org/uniprotkb/search?fields=accession,protein_name,organism_name&format=json&query= \
+        (reviewed:true)&size=500'
 
     uniprot_mapping = {}
     for batch, total in get_batch(url):
