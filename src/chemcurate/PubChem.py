@@ -51,7 +51,6 @@ class PubChem:
     def get_assay_ids(uniprot_ids:list) -> list:
         url = '{0}/bioassay/target/ProteinName/{1}/aids/JSON'.format(PubChem.url_stem, ','.join(uniprot_ids))
         response = requests.get(url)
-        print(response.json())
         return response.json()['IdentifierList']['AID']
     
     def __get_assay_ids(self) -> list:

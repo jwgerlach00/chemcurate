@@ -6,10 +6,14 @@ class Chembl:
     url_stem = 'https://www.ebi.ac.uk'
     
     def __init__(self, uniprot_ids:list):
-        target_chembl_ids = [Chembl.uniprot_2_chembl_target_id(uniprot_id) for uniprot_id in uniprot_ids]
-        self.df = Chembl.get_assays_from_target_chembl_ids(target_chembl_ids)
-        structures = Chembl.get_structures_from_mol_chembl_ids(self.df['molecule_chembl_id'].tolist())
-        self.df = structures.merge(self.df, on='molecule_chembl_id')
+        target_chembl_ids = [Chembl.uniprot_2_chembl_target_id(i) for i in uniprot_ids]
+        target_chembl_ids = [i for i in target_chembl_ids if i] # Remove None values
+        if target_chembl_ids:
+            self.df = Chembl.get_assays_from_target_chembl_ids(target_chembl_ids)
+            structures = Chembl.get_structures_from_mol_chembl_ids(self.df['molecule_chembl_id'].tolist())
+            self.df = structures.merge(self.df, on='molecule_chembl_id')
+        else:
+            self.df = pd.DataFrame() # Empty dataframe if there is no data
         
     def __str__(self):
         return str(self.df)
@@ -20,8 +24,11 @@ class Chembl:
     @staticmethod
     def uniprot_2_chembl_target_id(uniprot_id:str):
         url = f'{Chembl.url_stem}/chembl/api/data/chembl_id_lookup/search.json?q={uniprot_id}'
-        response = requests.get(url)
-        return response.json()['chembl_id_lookups'][0]['chembl_id']
+        response_json = requests.get(url).json()
+        if response_json['chembl_id_lookups']:
+            return response_json['chembl_id_lookups'][0]['chembl_id']
+        else:
+            return None
     
     @staticmethod
     def get_assays_from_target_chembl_ids(target_chembl_ids:list, limit:int=100) -> pd.DataFrame:
