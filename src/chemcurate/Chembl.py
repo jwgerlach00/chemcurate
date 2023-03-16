@@ -1,13 +1,15 @@
 import requests
 import pandas as pd
 from typing import Union, List, Generator, Iterable
+from chemcurate import __Base
 
 
-class Chembl:
+class Chembl(__Base):
     _url_stem = 'https://www.ebi.ac.uk'
-    _batch_size = 100 # NOTE: DONT CHANGE (Chembl API limit)
     
     def __init__(self, uniprot_ids:List[str]) -> None:
+        super(Chembl, self).__init__()
+        
         target_chembl_ids = []
         for i in uniprot_ids:
             target_chembl_ids += Chembl.uniprot_2_chembl_target_id(i)
@@ -27,12 +29,6 @@ class Chembl:
         return len(self.df)
     
     @staticmethod
-    def batch(iterable:Iterable, n:int=1) -> Generator:
-        l = len(iterable)
-        for ndx in range(0, l, n):
-            yield iterable[ndx:min(ndx + n, l)]
-    
-    @staticmethod
     def uniprot_2_chembl_target_id(uniprot_id:str) -> Union[List[str], None]:
         url = f'{Chembl._url_stem}/chembl/api/data/chembl_id_lookup/search.json?q={uniprot_id}'
         response_json = requests.get(url).json()
@@ -45,9 +41,9 @@ class Chembl:
     def get_assays_from_target_chembl_ids(target_chembl_ids:List[str]) -> pd.DataFrame:
         activities = []
         # Batch in case targets are greater than Chembl._batch_size
-        for x in Chembl.batch(target_chembl_ids, Chembl._batch_size):
+        for batch in Chembl.batch(target_chembl_ids, Chembl._batch_size):
             url = '{0}/chembl/api/data/activity.json?target_chembl_id__in={1}&assay_type=B&limit={2}'\
-                .format(Chembl._url_stem, ','.join(x), Chembl._batch_size)
+                .format(Chembl._url_stem, ','.join(batch), Chembl._batch_size)
             
             response_json = requests.get(url).json()
             activities += response_json['activities']
@@ -69,9 +65,9 @@ class Chembl:
         unique_mol_chembl_ids = list(set(mol_chembl_ids))
         
         molecules = []
-        for x in Chembl.batch(unique_mol_chembl_ids, Chembl._batch_size):
+        for batch in Chembl.batch(unique_mol_chembl_ids, Chembl._batch_size):
             url = '{0}/chembl/api/data/molecule.json?molecule_chembl_id__in={1}&limit={2}'\
-                .format(Chembl._url_stem, ','.join(x), Chembl._batch_size)
+                .format(Chembl._url_stem, ','.join(batch), Chembl._batch_size)
             response_json = requests.get(url).json()
             molecules += response_json['molecules']
             # NOTE: No next page because retults = limit (one-to-one)
