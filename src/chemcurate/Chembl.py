@@ -1,6 +1,7 @@
 import requests
 import pandas as pd
-from typing import Union, List, Generator, Iterable
+from typing import Union, List
+
 from chemcurate import __Base
 
 
