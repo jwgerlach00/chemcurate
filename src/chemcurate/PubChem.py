@@ -35,12 +35,12 @@ class PubChem(__Base):
     
         for cids in self.cids:
             self.smiles.append(PubChem.get_smiles_from_cids(cids))
-            time.sleep(0.5)
+            time.sleep(0.25)
         
         
         self.__cids_from_sid_records()
-        self.__set_smiles()
-        self.__add_smiles_to_dfs()
+        self._set_smiles()
+        self._add_smiles_to_dfs()
         
         self.df = pd.concat(self.concise_assay_dfs)
         self.df.reset_index(drop=True, inplace=True)
@@ -55,7 +55,7 @@ class PubChem(__Base):
         return len(self.df)
     
     @staticmethod
-    def __sleep() -> None:
+    def _sleep() -> None:
         time.sleep(0.5)
     
     @staticmethod
@@ -75,7 +75,7 @@ class PubChem(__Base):
             json = response.json()['Table']
             rows = [row['Cell'] for row in json['Row']]
             dfs.append(pd.DataFrame(rows, columns=json['Columns']['Column']))
-            PubChem.__sleep()
+            PubChem._sleep()
         return dfs
             
     @staticmethod
@@ -84,7 +84,7 @@ class PubChem(__Base):
         for batch in PubChem.batch(sids, PubChem._batch_size):
             url = '{0}/substance/sid/{1}/record/JSON'.format(PubChem._url_stem, ','.join(batch))
             records += requests.get(url).json()['PC_Substances']
-            PubChem.__sleep()
+            PubChem._sleep()
         return records
     
     @staticmethod
@@ -97,15 +97,15 @@ class PubChem(__Base):
         for batch in PubChem.batch(cids, PubChem._batch_size):
             url = '{0}/compound/cid/{cid}/property/CanonicalSMILES/JSON'.format(PubChem._url_stem, ','.join(batch))
             smiles += requests.get(url).json()['PropertyTable']['Properties'][0]['CanonicalSMILES']
-            PubChem.__sleep()
+            PubChem._sleep()
         return smiles
     
-    def __set_smiles(self) -> None:
+    def _set_smiles(self) -> None:
         for cids in self.cids:
             self.smiles.append(PubChem.get_smiles_from_cids(cids))
             time.sleep(0.5)
             
-    def __add_smiles_to_dfs(self) -> None:
+    def _add_smiles_to_dfs(self) -> None:
         for df, smiles in zip(self.concise_assay_dfs, self.smiles):
             df[self.__smiles_col_name] = smiles
     
