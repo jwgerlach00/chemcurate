@@ -1,12 +1,13 @@
 import requests
 import pandas as pd
-from typing import Union, List
+from typing import Union, List, Tuple
 
 from chemcurate import __Base
 
 
 class Chembl(__Base):
     _url_stem = 'https://www.ebi.ac.uk'
+    _db_uniprot_ids_url = 'https://ftp.ebi.ac.uk/pub/databases/chembl/ChEMBLdb/latest/chembl_uniprot_mapping.txt'
     
     def __init__(self, uniprot_ids:List[str]) -> None:
         super(Chembl, self).__init__()
@@ -83,6 +84,18 @@ class Chembl(__Base):
             'molecule_chembl_id': mcid,
             'canonical_smiles': cs
         })
+        
+    @staticmethod
+    def get_db_uniprot_ids() -> Tuple[List[str], str]:
+        '''For UniprotMapper'''
+        res = requests.get(Chembl._db_uniprot_ids_url)
+        uniprot_ids = []
+        for i, line in enumerate(res.text.splitlines()):
+            if i == 0: # Header, skip
+                chembl_version_num = line.split(' ')[1].split('_')[1]
+            else:
+                uniprot_ids.append(line.split('\t')[0])
+        return uniprot_ids, chembl_version_num
 
 
 if __name__ == '__main__':
