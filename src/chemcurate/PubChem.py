@@ -64,6 +64,7 @@ class PubChem(__Base):
         for batch in PubChem.batch(uniprot_ids, PubChem._batch_size):
             url = '{0}/bioassay/target/ProteinName/{1}/aids/JSON'.format(PubChem._url_stem, ','.join(batch))
             aids += requests.get(url).json()['IdentifierList']['AID']
+            PubChem.__sleep()
         return aids
     
     @staticmethod
