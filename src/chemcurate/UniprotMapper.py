@@ -2,6 +2,7 @@ import requests
 from requests.adapters import HTTPAdapter, Retry
 import re
 from chemcurate import Chembl, PubChem
+from copy import deepcopy
 
 
 class UniprotMapper:
@@ -15,10 +16,12 @@ class UniprotMapper:
     _full_uniprot_url = 'https://rest.uniprot.org/uniprotkb/search?fields=accession,protein_name,organism_name&format= \
         json&query=(reviewed:true)&size=500'
 
-    def __init__(self):
-        self.full_uniprot_map = UniprotMapper.get_full_uniprot_map()
-        self.chembl_uniprot_ids = set(Chembl.get_db_uniprot_ids()[0]) # second element is chembl version
-        self.pubchem_uniprot_ids = set(PubChem.get_db_uniprot_ids())
+    def __init__(self, full_uniprot_map=None, chembl_uniprot_ids=None, pubchem_uniprot_ids=None):
+        self.full_uniprot_map = deepcopy(full_uniprot_map) if full_uniprot_map else UniprotMapper.get_full_uniprot_map()
+        self.chembl_uniprot_ids = deepcopy(chembl_uniprot_ids) if chembl_uniprot_ids else \
+            set(Chembl.get_db_uniprot_ids()[0]) # second element is chembl version
+        self.pubchem_uniprot_ids = deepcopy(pubchem_uniprot_ids) if pubchem_uniprot_ids else \
+            set(PubChem.get_db_uniprot_ids())
         
         self.map = {organism: self.process_organism(organism) for organism in self.full_uniprot_map.keys()}
         del self.full_uniprot_map
@@ -75,6 +78,33 @@ class UniprotMapper:
             print(f'{current_len} / {total}')
         
         return uniprot_mapping
+
+    def process_organism(self, organism:str, verbose:bool=False):
+        if verbose:
+            print(organism)
+
+        protein_names = self.full_uniprot_mapping[organism]['protein'].keys()
+        
+        protein_dict = {}
+        for protein_name in protein_names:
+            uniprot_list = []
+            for uniprot_id in self.full_uniprot_mapping[organism]['protein'][protein_name]:
+                booly = (uniprot_id in self.chembl_uniprot_ids, uniprot_id in self.pubchem_uniprot_ids)
+                if sum(booly):
+                    uniprot_list.append({uniprot_id: {
+                        'in_chembl': booly[0],
+                        'in_pubchem': booly[1]
+                    }})
+            if uniprot_list:
+                protein_dict[protein_name] = uniprot_list
+                
+        if protein_dict:
+            return {
+                'common_name': self.full_uniprot_mapping[organism]['common_name'],
+                'protein': protein_dict
+            }
+        else:
+            return None
 
     def process_organism(self, organism:str):
         common_name = self.full_uniprot_mapping[organism]['common_name']
