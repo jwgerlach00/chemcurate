@@ -44,6 +44,7 @@ class Chembl(__Base):
         activities = []
         # Batch in case targets are greater than Chembl._batch_size
         for batch in Chembl.batch(target_chembl_ids, Chembl._batch_size):
+            print(','.join(batch))
             url = '{0}/chembl/api/data/activity.json?target_chembl_id__in={1}&assay_type=B&limit={2}'\
                 .format(Chembl._url_stem, ','.join(batch), Chembl._batch_size)
             

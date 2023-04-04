@@ -26,20 +26,25 @@ class PubChem(__Base):
     def __init__(self, uniprot_ids:list) -> None:
         super(PubChem, self).__init__()
         
-        assay_ids = PubChem.get_assay_ids(uniprot_ids)
-        concise_assay_dfs = PubChem.get_concise_assay_dfs(assay_ids)
-        sid_records = [PubChem.get_sid_records(df['SID'].tolist()) for df in concise_assay_dfs]
-        cids = [PubChem.cids_from_sid_record(df_sid_record) for df_sid_record in sid_records]
-        smiles = PubChem.get_smiles_from_cids(cids)
+        # out_dict = {uniprot_id: None for uniprot_id in uniprot_ids}
+        assay_ids = {uniprot_id: (PubChem.get_assay_ids(uniprot_id), PubChem._sleep())[0] for uniprot_id in uniprot_ids}
+        concise_assay_dfs = {uniprot_id: PubChem.get_concise_assay_dfs(assay_ids[uniprot_id]) for uniprot_id in uniprot_ids}
+        # print(len(concise_assay_dfs[list(concise_assay_dfs.keys())[1]]))
+        # print(concise_assay_dfs[uniprot_ids[1]])#['SID'].tolist())
+        sid_records = {uniprot_id: PubChem.get_sid_records(concise_assay_dfs[uniprot_id]['SID'].tolist()) for uniprot_id in uniprot_ids}
+        # print(sid_records)
+        cids = {uniprot_id: [PubChem.cids_from_sid_record(df_sid_record) for df_sid_record in sid_records] for uniprot_id in uniprot_ids}
+        print(cids)
+        # smiles = [PubChem.get_smiles_from_cids(cids) for cids in]
 
-        for df, smiles in zip(concise_assay_dfs, smiles):
-            df[PubChem._smiles_col_name] = smiles
+        # for df, smiles in zip(concise_assay_dfs, smiles):
+        #     df[PubChem._smiles_col_name] = smiles
         
-        self.df = pd.concat(self.concise_assay_dfs)
-        self.df.reset_index(drop=True, inplace=True)
+        # self.df = pd.concat(self.concise_assay_dfs)
+        # self.df.reset_index(drop=True, inplace=True)
         
-        smiles_col = self.df.pop(PubChem._smiles_col_name)
-        self.df.insert(0, PubChem._smiles_col_name, smiles_col)
+        # smiles_col = self.df.pop(PubChem._smiles_col_name)
+        # self.df.insert(0, PubChem._smiles_col_name, smiles_col)
         
     def __str__(self) -> str:
         return str(self.df)
@@ -52,28 +57,25 @@ class PubChem(__Base):
         time.sleep(0.25)
     
     @staticmethod
-    def get_assay_ids(uniprot_ids:List[str]) -> List[str]:
-        aids = []
-        for batch in PubChem.batch(uniprot_ids, PubChem._batch_size):
-            url = '{0}/bioassay/target/ProteinName/{1}/aids/JSON'.format(PubChem._url_stem, ','.join(batch))
-            aids += requests.get(url).json()['IdentifierList']['AID']
-            PubChem.__sleep()
-        return aids
+    def get_assay_ids(uniprot_id:str) -> List[str]:
+        url = f'{PubChem._url_stem}/bioassay/target/ProteinName/{uniprot_id}/aids/JSON'
+        return requests.get(url).json()['IdentifierList']['AID']
     
     @staticmethod
     def get_concise_assay_dfs(assay_ids:List[Union[int, str]]) -> pd.DataFrame:
-        dfs = []
-        for batch in PubChem.batch(assay_ids, PubChem._batch_size):
+        df_out = pd.DataFrame()
+        for batch in PubChem.batch(assay_ids, 1):
             url = '{0}/bioassay/aid/{1}/concise/JSON'.format(PubChem._url_stem, ','.join(batch))
             response = requests.get(url)
             json = response.json()['Table']
             rows = [row['Cell'] for row in json['Row']]
-            dfs.append(pd.DataFrame(rows, columns=json['Columns']['Column']))
+            df_out = pd.concat((df_out, pd.DataFrame(rows, columns=json['Columns']['Column'])), ignore_index=True)
             PubChem._sleep()
-        return dfs
+        return df_out
             
     @staticmethod
-    def get_sid_records(sids:List[Union[int, str]]) -> List[dict]:        
+    def get_sid_records(sids:List[Union[int, str]]) -> List[dict]:
+        print(sids)
         records = []
         for batch in PubChem.batch(sids, PubChem._batch_size):
             url = '{0}/substance/sid/{1}/record/JSON'.format(PubChem._url_stem, ','.join(batch))
@@ -88,9 +90,13 @@ class PubChem(__Base):
     @staticmethod
     def get_smiles_from_cids(cids:List[str]) -> List[str]:
         smiles = []
+        print(cids)
+        print('cids')
         for batch in PubChem.batch(cids, PubChem._batch_size):
-            url = '{0}/compound/cid/{cid}/property/CanonicalSMILES/JSON'.format(PubChem._url_stem, ','.join(batch))
-            smiles += requests.get(url).json()['PropertyTable']['Properties'][0]['CanonicalSMILES']
+            print(batch)
+            url = '{0}/compound/cid/{1}/property/CanonicalSMILES/JSON'.format(PubChem._url_stem, ','.join(batch))
+            print(requests.get(url).json().keys())
+            # smiles += requests.get(url).json()['PropertyTable']['Properties'][0]['CanonicalSMILES']
             PubChem._sleep()
         return smiles
     
