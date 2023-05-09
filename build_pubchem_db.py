@@ -158,19 +158,17 @@ class PubChemDB:
 
         new_names = [x[1] for x in duckdb.sql(f'SELECT * FROM results_table WHERE tid IN {tuple(old_names)}').fetchall()]
         
-        print(data_table.column_names)
-        print(exclude_names + new_names)
         data_table = data_table.rename_columns(exclude_names + new_names)
-        
-        
+
         ########## Convert 1, 2, 3 coded activity to strings w/ meaning (same format as PubChem) ##########
         query = f'''
         SELECT
         CASE
+            WHEN TRY_CAST(outcome AS INTEGER) IS NULL THEN NULL
             WHEN outcome = 1 THEN '{self.activity_map[1]}'
             WHEN outcome = 2 THEN '{self.activity_map[2]}'
             WHEN outcome = 3 THEN '{self.activity_map[3]}'
-            ELSE 'unknown'
+            ELSE NULl
         END AS Activity
         FROM data_table;
         '''
