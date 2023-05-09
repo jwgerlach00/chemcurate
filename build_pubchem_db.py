@@ -14,9 +14,8 @@ from itertools import zip_longest
 class PubChemDB:
     def __init__(self, path):
         self.dir_path = path
-        # self.file_jsons = self.read_dir(path)
         
-        self.__unit_map = {
+        self.__unit_map = { # Sourced from: https://ftp.ncbi.nlm.nih.gov/pubchem/Bioassay/pcassay2.asn
             1: 'ppt',
             2: 'ppm',
             3: 'ppb',
@@ -48,10 +47,12 @@ class PubChemDB:
             255: 'unspecified'
         }
         
-        self.__activity_map = {
-            1: 'Inactive',
-            2: 'Active',
-            3: 'Inconclusive'
+        self.__activity_map = { # Sourced from: https://ftp.ncbi.nlm.nih.gov/pubchem/Bioassay/pcassay2.asn
+            1: 'inactive',
+            2: 'active',
+            3: 'Inconclusive',
+            4: 'unspecified',
+            5: 'probe'
         }
         
         self.__results_schema = pa.schema([
@@ -61,19 +62,54 @@ class PubChemDB:
             pa.field('sunit', pa.string())
         ])
         
+        self.__possible_columns = [ # Sourced from: https://ftp.ncbi.nlm.nih.gov/pubchem/Bioassay/pcassay2.asn
+            'sid',
+            'sid-source'
+            'version',
+            'comment',
+            'outcome',
+            'rank',
+            'data',
+            'url',
+            'xref',
+            'date'
+        ]
+        
         self.read_whole_dir()
     
     @property  
     def unit_map(self) -> Dict[int, str]:
-        return copy.deepcopy(self.__unit_map)
+        """
+        Sourced from: https://ftp.ncbi.nlm.nih.gov/pubchem/Bioassay/pcassay2.asn
+
+        :return: Mapper from INTEGER code to STRING unit of measurement
+        :rtype: Dict[int, str]
+        """
+        return copy.copy(self.__unit_map)
 
     @property
     def activity_map(self) -> Dict[int, str]:
-        return copy.deepcopy(self.__activity_map)
+        """
+        Sourced from: https://ftp.ncbi.nlm.nih.gov/pubchem/Bioassay/pcassay2.asn
+
+        :return: Mapper from INTEGER code to STRING activity class
+        :rtype: Dict[int, str]
+        """
+        return copy.copy(self.__activity_map)
 
     @property
     def results_schema(self) -> pa.lib.Schema:
-        return copy.deepcopy(self.__results_schema)
+        return copy.copy(self.__results_schema)
+    
+    @property
+    def possible_columns(self) -> List[str]:
+        """
+        Sourced from: https://ftp.ncbi.nlm.nih.gov/pubchem/Bioassay/pcassay2.asn
+
+        :return: List of names of possibe non-tid columns
+        :rtype: List[str]
+        """
+        return copy.copy(self.__possible_columns)
     
     @staticmethod
     def batch(iterable: Iterable[str], n: int = 1) -> Generator[List[str], None, None]:
@@ -115,7 +151,7 @@ class PubChemDB:
         """
         Iterates through entire directory OF ZIP DIRECTORIES, each containing .json.gz files and stores in database
         """
-        for zip_dir in os.listdir(self.dir_path)[:1]: # NOTE: Limit to just first for testing
+        for zip_dir in os.listdir(self.dir_path)[:10]: # NOTE: Limit to just first for testing
             loader = self.read_zip_dir(os.path.join(self.dir_path, zip_dir), verbose=False, batch_size=3)
             
             for batch in loader:
@@ -145,7 +181,7 @@ class PubChemDB:
             # Extract useful data for each TID
             for i, tid_data in enumerate(sid_results):
                 tid_data.update({str(tid_data.pop('tid')): # use string TID as dict key
-                                list(tid_data.pop('value').values())[0]}) # list of one element
+                                list(tid_data.pop('v alue').values())[0]}) # list of one element
                 sid_results[i] = tid_data # over-write
 
             # Convert list of dictionaries to single dict
@@ -157,7 +193,7 @@ class PubChemDB:
         data_table = pa.Table.from_pylist(pylist) # convert to table
             
         ########## Join data_copy w/ results_table on TIDs ##########
-        exclude_names = [i for i in ['sid', 'version', 'outcome', 'rank', 'comment'] if i in data_table.column_names] # non-TID column names
+        exclude_names = [i for i in self.possible_columns if i in data_table.column_names] # non-TID column names
         # List of TID column names in data_table
         old_names = [int(x) for x in data_table.column_names if x not in exclude_names]
 
@@ -184,8 +220,8 @@ class PubChemDB:
         
         data_table = data_table.rename_columns(exclude_names + new_names)
 
-        ########## Convert 1, 2, 3 coded activity to strings w/ meaning (same format as PubChem) ##########
-        # If outcome is not able to be cast to an integer, set to NULL. If it is not 1, 2, or 3 set to NULL
+        ########## Convert integer coded activity to strings w/ meaning (same format as PubChem) ##########
+        # If outcome is not able to be cast to an integer, set to NULL. If it is not a registered INT set to NULL
         query = f'''
         SELECT
         CASE
@@ -193,6 +229,8 @@ class PubChemDB:
             WHEN outcome = 1 THEN '{self.activity_map[1]}'
             WHEN outcome = 2 THEN '{self.activity_map[2]}'
             WHEN outcome = 3 THEN '{self.activity_map[3]}'
+            WHEN outcome = 4 THEN '{self.activity_map[4]}'
+            WHEN outcome = 5 THEN '{self.activity_map[5]}'
             ELSE NULl
         END AS Activity
         FROM data_table;
@@ -202,6 +240,7 @@ class PubChemDB:
         data_table = data_table.append_column('Activity', activity_col)
         # Remove old integer activity 'outcome' column
         data_table = data_table.remove_column(data_table.column_names.index('outcome'))
+        # print(duckdb.sql('SELECT * FROM data_table').df())
         return data_table
     
 if __name__ == '__main__':
