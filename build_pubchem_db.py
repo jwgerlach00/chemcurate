@@ -82,7 +82,18 @@ class PubChemDB:
     
     @staticmethod
     def read_zip_dir(zip_dir_path:str, verbose:bool=False, batch_size:int=10) -> List[dict]:
-        '''Reads all .json.gz files in a .zip directory and returns a list of dict objects'''
+        """
+        Reads all .json.gz files in a .zip directory and returns a list of dict objects
+
+        :param zip_dir_path: Path to .zip directory containing .json.gz files
+        :type zip_dir_path: str
+        :param verbose: Whether to print filenames, defaults to False
+        :type verbose: bool, optional
+        :param batch_size: Number of .json.gz files to load into memory at once, defaults to 10
+        :type batch_size: int, optional
+        :yield: List of dict objects containing the loaded JSON data
+        :rtype: Iterator[List[dict]]
+        """
         with zipfile.ZipFile(zip_dir_path, 'r') as zip_ref:
             for batch in PubChemDB.batch(zip_ref.namelist(), n=batch_size):
                 jsons = []
@@ -100,16 +111,29 @@ class PubChemDB:
                             jsons.append(json.loads(contents_str))
                 yield jsons
     
-    def read_whole_dir(self) -> List[dict]:
+    def read_whole_dir(self) -> None:
+        """
+        Iterates through entire directory OF ZIP DIRECTORIES, each containing .json.gz files and stores in database
+        """
         for zip_dir in os.listdir(self.dir_path)[:1]: # NOTE: Limit to just first for testing
             loader = self.read_zip_dir(os.path.join(self.dir_path, zip_dir), verbose=False, batch_size=3)
             
             for batch in loader:
                 for json in batch:
                     table = self.format_file(json)
+                    
+                    # TODO: Add functionality to store in database
         
         
     def format_file(self, file_json:dict) -> pa.lib.Table:
+        """
+        Formats a single PubChem FTP JSON (unzipped) file into a pyarrow table similar to that found in PubChem Web
+
+        :param file_json: Loaded JSON file
+        :type file_json: dict
+        :return: Formatted pyarrow table
+        :rtype: pa.lib.Table
+        """
         # Extract from file data
         data_copy = copy.deepcopy(file_json['PC_AssaySubmit']['data'])
         
@@ -161,6 +185,7 @@ class PubChemDB:
         data_table = data_table.rename_columns(exclude_names + new_names)
 
         ########## Convert 1, 2, 3 coded activity to strings w/ meaning (same format as PubChem) ##########
+        # If outcome is not able to be cast to an integer, set to NULL. If it is not 1, 2, or 3 set to NULL
         query = f'''
         SELECT
         CASE
