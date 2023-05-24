@@ -88,7 +88,8 @@ class PubChemDB(ABCChemDB):
             pa.field('sunit', pa.string())
         ])
         
-        self.__possible_columns = [ # sourced from: https://ftp.ncbi.nlm.nih.gov/pubchem/Bioassay/pcassay2.asn
+        self.__possible_non_tid_bioassay_columns = [ # sourced from: \
+            # https://ftp.ncbi.nlm.nih.gov/pubchem/Bioassay/pcassay2.asn
             'sid',
             'sid-source',
             'version',
@@ -99,6 +100,14 @@ class PubChemDB(ABCChemDB):
             'url',
             'xref',
             'date'
+        ]
+        
+        self.__possible_target_keys = [ # sourced from: https://ftp.ncbi.nlm.nih.gov/pubchem/Bioassay/pcassay2.asn
+            'name',
+            'mol_id',
+            'organism',
+            'descr',
+            'comment'
         ]
         
         ########## Connect to DB ##########
@@ -142,7 +151,17 @@ class PubChemDB(ABCChemDB):
         :return: List of names of possibe non-tid columns
         :rtype: List[str]
         """
-        return copy.deepcopy(self.__possible_columns)
+        return copy.deepcopy(self.__possible_non_tid_bioassay_columns)
+
+    @property
+    def __possible_target_keys(self) -> List[str]:
+        """
+        Sourced from: https://ftp.ncbi.nlm.nih.gov/pubchem/Bioassay/pcassay2.asn
+
+        :return: List of keys that could be present in the raw target data
+        :rtype: List[str]
+        """
+        return copy.deepcopy(self.__possible_target_keys)
         
     def build(self) -> None:
         ########## Build substance table ##########
@@ -295,7 +314,8 @@ class PubChemDB(ABCChemDB):
                     
     @staticmethod
     def _get_raw_data_from_file_json(file_json:dict) -> dict:
-        """Gets deepcopy of data dict from JSON dict tree. Raises error if data is not present
+        """
+        Gets deepcopy of data dict from JSON dict tree. Raises error if data is not present
 
         :param file_json: JSON file loaded to memory
         :type file_json: dict
@@ -310,7 +330,8 @@ class PubChemDB(ABCChemDB):
         
     @staticmethod
     def _get_raw_results_from_file_json(file_json:dict) -> dict:
-        """Gets deepcopy of results dict from JSON dict tree. Raises error if results is not present
+        """
+        Gets deepcopy of results dict from JSON dict tree. Raises error if results is not present
 
         :param file_json: JSON File loaded to memory
         :type file_json: dict
@@ -325,7 +346,8 @@ class PubChemDB(ABCChemDB):
     
     @staticmethod
     def _get_raw_target_from_file_json(file_json:dict):
-        """Gets deepcopy of target dict from JSON dict tree. Raises error if target is not present
+        """
+        Gets deepcopy of target dict from JSON dict tree. Raises error if target is not present
 
         :param file_json: JSON File loaded to memory
         :type file_json: dict
@@ -341,7 +363,8 @@ class PubChemDB(ABCChemDB):
         
     @staticmethod 
     def _format_raw_data_into_pa_table(raw_data:dict) -> pa.lib.Table:
-        """_summary_
+        """
+        _summary_
 
         :param data: Raw data info from JSON
         :type data: dict
@@ -370,7 +393,8 @@ class PubChemDB(ABCChemDB):
         return pa.Table.from_pylist(pylist) # convert to table
     
     def _add_units_to_results_table_col_names(self, results_table:pa.lib.Table) -> pa.lib.Table:
-        """Adds units to column names according to self.unit_map. ex: 'IC50' -> 'IC50, M'
+        """
+        Adds units to column names according to self.unit_map. ex: 'IC50' -> 'IC50, M'
 
         :param results_table: PyArrow table containing PubChem results data
         :type results_table: pa.lib.Table
@@ -391,22 +415,23 @@ class PubChemDB(ABCChemDB):
 
         return pa.Table.from_pydict(results_dict)
     
-    @staticmethod
-    def _format_raw_target(raw_target:dict) -> dict:
-        """Un-nests the 'mol_id' data and renames some keys to make them appropriate column names
+    def _format_raw_target(self, raw_target:dict) -> dict:
+        """
+        Un-nests the 'mol_id' data and renames some keys to make them appropriate column names
 
-        :param raw_target: Raw target info from JSON, double level dict
+        :param raw_target: Raw target info from JSON, double-level dict
         :type raw_target: dict
-        :return: Reorganized target info, single level dict
+        :return: Reorganized target info, single-level dict
         :rtype: dict
         """
         target_dict = {}
-        target_dict['target'] = raw_target['name']
         
-        for key, value in raw_target['mol_id'].items():
-            target_dict[f'target_{key}'] = value
-        
-        target_dict['target_description'] = raw_target['descr']
+        for key in self._possible_non_tid_bioassay_columns():
+            if key == 'mol_id': # un-nest from double-level to single-level dict
+                for key, value in raw_target['mol_id'].items():
+                    target_dict[f'target_{key}'] = value
+            else:
+                target_dict[f'target_{key}'] = raw_target[key]
         
         return target_dict
         
