@@ -12,12 +12,13 @@ from tqdm import tqdm
 from rdkit.Chem import PandasTools
 import naclo
 import sqlite3
+from ABCChemDB import ABCChemDB
 
 
-class PubChemDB:
-    def __init__(self, json_dir_path:str, sdf_dir_path:str):
-        self.json_dir_path = json_dir_path
-        self.sdf_dir_path = sdf_dir_path
+class PubChemDB(ABCChemDB):
+    def __init__(self, bioassay_json_dir_path:str, substance_sdf_dir_path:str) -> None:
+        self.json_dir_path = bioassay_json_dir_path
+        self.sdf_dir_path = substance_sdf_dir_path
         
         self.__unit_map = { # sourced from: https://ftp.ncbi.nlm.nih.gov/pubchem/Bioassay/pcassay2.asn
             1: 'ppt',
@@ -64,11 +65,11 @@ class PubChemDB:
             SELECT
             CASE
                 WHEN TRY_CAST(outcome AS INTEGER) IS NULL THEN NULL
-                WHEN outcome = 1 THEN '{self.activity_map[1]}'
-                WHEN outcome = 2 THEN '{self.activity_map[2]}'
-                WHEN outcome = 3 THEN '{self.activity_map[3]}'
-                WHEN outcome = 4 THEN '{self.activity_map[4]}'
-                WHEN outcome = 5 THEN '{self.activity_map[5]}'
+                WHEN outcome = 1 THEN '{self._activity_map[1]}'
+                WHEN outcome = 2 THEN '{self._activity_map[2]}'
+                WHEN outcome = 3 THEN '{self._activity_map[3]}'
+                WHEN outcome = 4 THEN '{self._activity_map[4]}'
+                WHEN outcome = 5 THEN '{self._activity_map[5]}'
                 ELSE NULl
             END AS Activity
             FROM data_table;
@@ -108,9 +109,20 @@ class PubChemDB:
         # for batch in loader:
         #         for json in batch:
         #             table = self.format_file(json)
+        
+    def build(self) -> None:
+        ########## Build substance table ##########
+        ########## Build bioassay table ##########
+        ########## Join substances to bioassay table ##########
+        ########## Remove substance table ##########
+        return None # NOTE: Maybe return a connection to the DB?
+    
+    @property
+    def connection(self) -> sqlite3.Connection:
+        return self.conn
     
     @property  
-    def unit_map(self) -> Dict[int, str]:
+    def _unit_map(self) -> Dict[int, str]:
         """
         Sourced from: https://ftp.ncbi.nlm.nih.gov/pubchem/Bioassay/pcassay2.asn
 
@@ -120,7 +132,7 @@ class PubChemDB:
         return copy.copy(self.__unit_map)
 
     @property
-    def activity_map(self) -> Dict[int, str]:
+    def _activity_map(self) -> Dict[int, str]:
         """
         Sourced from: https://ftp.ncbi.nlm.nih.gov/pubchem/Bioassay/pcassay2.asn
 
@@ -130,11 +142,11 @@ class PubChemDB:
         return copy.copy(self.__activity_map)
 
     @property
-    def results_schema(self) -> pa.lib.Schema:
+    def _results_schema(self) -> pa.lib.Schema:
         return copy.copy(self.__results_schema)
     
     @property
-    def possible_columns(self) -> List[str]:
+    def _possible_columns(self) -> List[str]:
         """
         Sourced from: https://ftp.ncbi.nlm.nih.gov/pubchem/Bioassay/pcassay2.asn
 
@@ -270,7 +282,7 @@ class PubChemDB:
             name = results_dict['name'][i]
 
             if unit is not None:
-                results_dict['name'][i] = f'{name}, {self.unit_map[unit]}'
+                results_dict['name'][i] = f'{name}, {self._unit_map[unit]}'
             elif sunit is not None:
                 results_dict['name'][i] = f'{name}, {sunit}'
 
@@ -295,13 +307,13 @@ class PubChemDB:
         
         ########## Format raw data and results to PyArrow tables ##########
         data_table = PubChemDB._format_raw_data_into_pa_table(raw_data)
-        results_table = pa.Table.from_pylist(raw_results, schema=self.results_schema)
+        results_table = pa.Table.from_pylist(raw_results, schema=self._results_schema)
         
         ########## Add units to each column name, ex: value --> value (unit) ##########
         results_table = PubChemDB._add_units_to_results_table_col_names(results_table)
             
         ########## Replace integer codes in data_table w/ names in results_table by joining on TIDs ##########
-        non_tid_names = [i for i in self.possible_columns if i in data_table.column_names]
+        non_tid_names = [i for i in self._possible_columns if i in data_table.column_names]
         tid_integer_codes = [int(x) for x in data_table.column_names if x not in non_tid_names]
         tid_names = [x[1] for x in
                      duckdb.sql(f'SELECT * FROM results_table WHERE tid IN {tuple(tid_integer_codes)}').fetchall()]
