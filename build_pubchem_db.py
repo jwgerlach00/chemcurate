@@ -7,12 +7,19 @@ from typing import List, Dict, Iterable, Generator
 import gzip
 import os
 from itertools import zip_longest
-from pprint import pprint
 from tqdm import tqdm
 from rdkit.Chem import PandasTools
 import naclo
 import sqlite3
 from ABCChemDB import ABCChemDB
+
+
+def print_table(cursor, table_name:str, n_rows:int=100) -> None:
+    cursor.execute(f'SELECT * FROM {table_name}')
+    rows = cursor.fetchall()
+    # Print the table contents
+    for row in rows[:n_rows]:
+        print(row)
 
 
 class PubChemDB(ABCChemDB):
@@ -98,24 +105,6 @@ class PubChemDB(ABCChemDB):
         ########## Connect to DB ##########
         self.conn = sqlite3.connect('pubchem_temp.db')
         self.cur = self.conn.cursor()
-        
-        ########## Create tables ##########
-        self.cur.execute('DROP TABLE IF EXISTS substance') # remove substance table if it exists to avoid duplication
-        self.build_substance_table_and_add_to_db()
-        
-        # self.read_whole_dir()
-        # # print('o')
-        # loader = self.read_zip_dir('/Users/collabpharma/Desktop/JSON/0434001_0435000.zip', verbose=True, batch_size=3)
-        # for batch in loader:
-        #         for json in batch:
-        #             table = self.format_file(json)
-        
-    def build(self) -> None:
-        ########## Build substance table ##########
-        ########## Build bioassay table ##########
-        ########## Join substances to bioassay table ##########
-        ########## Remove substance table ##########
-        return None # NOTE: Maybe return a connection to the DB?
     
     @property
     def connection(self) -> sqlite3.Connection:
@@ -129,7 +118,7 @@ class PubChemDB(ABCChemDB):
         :return: Mapper from INTEGER code to STRING unit of measurement
         :rtype: Dict[int, str]
         """
-        return copy.copy(self.__unit_map)
+        return copy.deepcopy(self.__unit_map)
 
     @property
     def _activity_map(self) -> Dict[int, str]:
@@ -139,72 +128,160 @@ class PubChemDB(ABCChemDB):
         :return: Mapper from INTEGER code to STRING activity class
         :rtype: Dict[int, str]
         """
-        return copy.copy(self.__activity_map)
+        return copy.deepcopy(self.__activity_map)
 
     @property
     def _results_schema(self) -> pa.lib.Schema:
-        return copy.copy(self.__results_schema)
+        return copy.deepcopy(self.__results_schema)
     
     @property
-    def _possible_columns(self) -> List[str]:
+    def _possible_non_tid_bioassay_columns(self) -> List[str]:
         """
         Sourced from: https://ftp.ncbi.nlm.nih.gov/pubchem/Bioassay/pcassay2.asn
 
         :return: List of names of possibe non-tid columns
         :rtype: List[str]
         """
-        return copy.copy(self.__possible_columns)
+        return copy.deepcopy(self.__possible_columns)
+        
+    def build(self) -> None:
+        ########## Build substance table ##########
+        # self._build_substance_table()
+        
+        ########## Build bioassay table ##########
+        self._build_bioassay_table()
+        ########## Join substances to bioassay table ##########
+        ########## Remove substance table ##########
+        return None # NOTE: Maybe return a connection to the DB?
+
+    def _build_substance_table(self) -> None:
+        # Remove existing tables
+        self.cur.execute('DROP TABLE IF EXISTS substance') # remove substance table if it exists to avoid duplication
+        self.cur.execute('DROP TABLE IF EXISTS substance_errors')
+        # Create substance_errors table (NOTE: substance_table is created in build_substance_table_and_add_to_db())
+        self.cur.execute('CREATE TABLE substance_errors (filename TEXT PRIMARY KEY, error TEXT)')
+        self.build_substance_table_and_add_to_db()
+        
+    def _build_bioassay_table(self) -> None:
+        # Remove existing tables
+        self.cur.execute('DROP TABLE IF EXISTS bioassay')
+        
+        first_bioassay_flag_for_alter_table = True # if True, don't need to alter table to add new columns
+            # initial schema = schema for first bioassay
+        for zip_dir in tqdm(os.listdir(self.json_dir_path)[:1]): # NOTE: Limit to just first for testing
+            loader = PubChemDB._read_one_bioassay_zip_dir(os.path.join(self.json_dir_path, zip_dir), print_filename=True)
+            
+            for json in loader: # (batch_size) bioassays at a time
+                # for json in batch:
+                table = self._format_bioassay_and_store_in_table(json)
+                
+                if not first_bioassay_flag_for_alter_table:
+                    for column in table.column_names:
+                        if column not in [x[1] for x in self.conn.execute(f'PRAGMA table_info(bioassay)').fetchall()]:
+                            column_type = table.schema.field_by_name(column).type
+                            self.conn.execute(f"ALTER TABLE bioassay ADD COLUMN '{column}' {column_type}")
+
+
+                table.to_pandas().to_sql('bioassay', self.conn, if_exists='append', index=False)
+                first_bioassay_flag_for_alter_table = False
+                
+                # self.cur.execute('SELECT * FROM bioassay')
+                # rows = self.cur.fetchall()
+
+                # # Print the table contents
+                # for row in rows[:100]:
+                #     print(row)   
+                
+                # TODO: Add targets as a column
+                
+                # TODO: Add functionality to store in database
+    
+    def build_substance_table_and_add_to_db(self):
+        for filename in os.listdir(self.sdf_dir_path):
+            if filename.endswith('.sdf.gz'):
+                try:
+                    df = PandasTools.LoadSDF(os.path.join(self.sdf_dir_path, filename))
+                    # Delete unnecessary columns
+                    df = df[['PUBCHEM_SUBSTANCE_ID', 'ROMol']]
+                    # Add SMILES from MOLs
+                    df = naclo.dataframes.df_mols_2_smiles(df, 'ROMol', 'SMILES')
+                    # Remove MOLs, only keep SMILES
+                    df.drop('ROMol', axis=1, inplace=True)
+                    
+                    # TODO: Add df to DB
+                    df.to_sql('substance', self.conn, if_exists='append', index=False)
+                except Exception as e:
+                    self.cur.execute('INSERT INTO substance_errors (filename, error) VALUES (?, ?)',
+                                     (filename.split('.')[0], str(e)))
     
     @staticmethod
-    def _batch(iterable: Iterable[str], n: int = 1) -> Generator[List[str], None, None]:
-        args = [iter(iterable)] * n
-        yield from ([str(x) for x in tup if x is not None] for tup in zip_longest(*args))
-    
-    @staticmethod
-    def read_zip_dir(zip_dir_path:str, verbose:bool=False, batch_size:int=10) -> List[dict]:
+    def _read_one_bioassay_zip_dir(zip_dir_path:str, print_filename:bool=False) -> dict:
         """
-        Reads all .json.gz files in a .zip directory and returns a list of dict objects
+        Sequentially reads .json.gz files in a .zip directory into dict object. Yields one at a time.
+        
+        NOTE: This will read from a zip directory with .json.gz children, data comes directly from FTP as a zip
+        directory containing ZIP DIRECTORIES, each of which contain .json.gz files.
 
         :param zip_dir_path: Path to .zip directory containing .json.gz files
         :type zip_dir_path: str
-        :param verbose: Whether to print filenames, defaults to False
-        :type verbose: bool, optional
-        :param batch_size: Number of .json.gz files to load into memory at once, defaults to 10
-        :type batch_size: int, optional
-        :yield: List of dict objects containing the loaded JSON data
+        :param print_filename: Whether to print filenames, defaults to False
+        :type print_filename: bool, optional
+        :yield: Dict object containing loaded JSON data
         :rtype: Iterator[List[dict]]
         """
-        # print(zip_dir_path)
         with zipfile.ZipFile(zip_dir_path, 'r') as zip_ref:
-            # print(zip_ref)
-            for batch in PubChemDB._batch(zip_ref.namelist(), n=batch_size):
-                jsons = []
-                # print(batch)
-                # Iterate over .zip zipped directory
-                for filename in batch:
-                    if filename.endswith('.json.gz'):
-                        # Read .json.gz zipped file
-                        with zip_ref.open(filename, 'r') as file:
-                            contents = gzip.decompress(file.read())
-                            contents_str = contents.decode('utf-8')
-                            # Load the JSON data into a Python object
-                            if verbose: # Print filename
-                                print(f'LOADING: {filename}')
-                            jsons.append(json.loads(contents_str))
-                yield jsons
+            # Iterate over .zip zipped directory
+            filenames = [filename for filename in zip_ref.namelist() if filename.endswith('.json.gz')]
+
+            for filename in filenames:
+                # Read .json.gz zipped file
+                with zip_ref.open(filename, 'r') as file:
+                    contents = gzip.decompress(file.read())
+                    contents_str = contents.decode('utf-8')
+                    # Load the JSON data into a Python object
+                    if print_filename: # Print filename
+                        print(f'LOADING: {filename}')
     
-    def read_whole_dir(self) -> None:
+                yield json.loads(contents_str)
+                
+    def _format_bioassay_and_store_in_table(self, file_json:dict) -> pa.lib.Table:
         """
-        Iterates through entire directory OF ZIP DIRECTORIES, each containing .json.gz files and stores in database
+        Formats a single PubChem FTP JSON (unzipped) file into a pyarrow table similar to that found in PubChem Web
+
+        :param file_json: Loaded JSON file
+        :type file_json: dict
+        :return: Formatted pyarrow table
+        :rtype: pa.lib.Table
         """
-        for zip_dir in tqdm(os.listdir(self.json_dir_path)[:10]): # NOTE: Limit to just first for testing
-            loader = self.read_zip_dir(os.path.join(self.json_dir_path, zip_dir), verbose=False, batch_size=3)
+        
+        ########## Get raw data and results nested within file_json ##########
+        try:
+            raw_data = PubChemDB._get_raw_data_from_file_json(file_json)
+            raw_results = PubChemDB._get_raw_results_from_file_json(file_json) # contains metadata
+        except KeyError: # no data in file_json
+            return None
+        
+        ########## Format raw data and results to PyArrow tables ##########
+        data_table = PubChemDB._format_raw_data_into_pa_table(raw_data)
+        results_table = pa.Table.from_pylist(raw_results, schema=self._results_schema)
+        
+        ########## Add units to each column name, ex: value --> value (unit) ##########
+        results_table = self._add_units_to_results_table_col_names(results_table)
             
-            for batch in loader:
-                for json in batch:
-                    table = self.format_file(json)
-                    
-                    # TODO: Add functionality to store in database
+        ########## Replace integer codes in data_table w/ names in results_table by joining on TIDs ##########
+        non_tid_names = [i for i in self._possible_non_tid_bioassay_columns if i in data_table.column_names]
+        tid_integer_codes = [int(x) for x in data_table.column_names if x not in non_tid_names]
+        tid_names = [x[1] for x in
+                    duckdb.sql(f'SELECT * FROM results_table WHERE tid IN {tuple(tid_integer_codes)}').fetchall()]
+        data_table = data_table.rename_columns(non_tid_names + tid_names)
+
+        ########## Convert integer coded activity to strings w/ meaning (same format as PubChem) ##########
+        activity_col = pa.array(duckdb.sql(self.activity_map_sql_query).fetchall()).flatten()
+        data_table = data_table.append_column('Activity', activity_col)
+        # Remove old integer activity 'outcome' column
+        data_table = data_table.remove_column(data_table.column_names.index('outcome'))
+
+        return data_table
                     
     @staticmethod
     def _get_raw_data_from_file_json(file_json:dict) -> dict:
@@ -287,60 +364,10 @@ class PubChemDB(ABCChemDB):
                 results_dict['name'][i] = f'{name}, {sunit}'
 
         return pa.Table.from_pydict(results_dict)
-        
-    def format_file(self, file_json:dict) -> pa.lib.Table:
-        """
-        Formats a single PubChem FTP JSON (unzipped) file into a pyarrow table similar to that found in PubChem Web
 
-        :param file_json: Loaded JSON file
-        :type file_json: dict
-        :return: Formatted pyarrow table
-        :rtype: pa.lib.Table
-        """
-        
-        ########## Get raw data and results nested within file_json ##########
-        try:
-            raw_data = PubChemDB._get_raw_data_from_file_json(file_json)
-            raw_results = PubChemDB._get_raw_results_from_file_json(file_json) # contains metadata
-        except KeyError: # no data in file_json
-            return None
-        
-        ########## Format raw data and results to PyArrow tables ##########
-        data_table = PubChemDB._format_raw_data_into_pa_table(raw_data)
-        results_table = pa.Table.from_pylist(raw_results, schema=self._results_schema)
-        
-        ########## Add units to each column name, ex: value --> value (unit) ##########
-        results_table = PubChemDB._add_units_to_results_table_col_names(results_table)
-            
-        ########## Replace integer codes in data_table w/ names in results_table by joining on TIDs ##########
-        non_tid_names = [i for i in self._possible_columns if i in data_table.column_names]
-        tid_integer_codes = [int(x) for x in data_table.column_names if x not in non_tid_names]
-        tid_names = [x[1] for x in
-                     duckdb.sql(f'SELECT * FROM results_table WHERE tid IN {tuple(tid_integer_codes)}').fetchall()]
-        data_table = data_table.rename_columns(non_tid_names + tid_names)
 
-        ########## Convert integer coded activity to strings w/ meaning (same format as PubChem) ##########
-        activity_col = pa.array(duckdb.sql(self.activity_map_sql_query).fetchall()).flatten()
-        data_table = data_table.append_column('Activity', activity_col)
-        # Remove old integer activity 'outcome' column
-        data_table = data_table.remove_column(data_table.column_names.index('outcome'))
-
-        return data_table
-    
-    def build_substance_table_and_add_to_db(self):
-        for filename in os.listdir(self.sdf_dir_path):
-            if filename.endswith('.sdf.gz'):
-                df = PandasTools.LoadSDF(os.path.join(self.sdf_dir_path, filename))
-                # Delete unnecessary columns
-                df = df[['PUBCHEM_SUBSTANCE_ID', 'ROMol']]
-                # Add SMILES from MOLs
-                df = naclo.dataframes.df_mols_2_smiles(df, 'ROMol', 'SMILES')
-                # Remove MOLs, only keep SMILES
-                df.drop('ROMol', axis=1, inplace=True)
-                
-                # TODO: Add df to DB
-                df.to_sql('substance', self.conn, if_exists='append', index=False)
-    
 if __name__ == '__main__':
-    PubChemDB('/Users/collabpharma/Desktop/JSON',
-              '/Users/collabpharma/Desktop/SDF')#/0001001_0002000.zip'
+    pc_db = PubChemDB('/Users/collabpharma/Desktop/JSON',
+                      '/Users/collabpharma/Desktop/SDF')#/0001001_0002000.zip'
+    pc_db.build()
+    
