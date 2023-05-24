@@ -19,7 +19,7 @@ class PubChemDB:
         self.json_dir_path = json_dir_path
         self.sdf_dir_path = sdf_dir_path
         
-        self.__unit_map = { # Sourced from: https://ftp.ncbi.nlm.nih.gov/pubchem/Bioassay/pcassay2.asn
+        self.__unit_map = { # sourced from: https://ftp.ncbi.nlm.nih.gov/pubchem/Bioassay/pcassay2.asn
             1: 'ppt',
             2: 'ppm',
             3: 'ppb',
@@ -51,7 +51,7 @@ class PubChemDB:
             255: 'unspecified'
         }
         
-        self.__activity_map = { # Sourced from: https://ftp.ncbi.nlm.nih.gov/pubchem/Bioassay/pcassay2.asn
+        self.__activity_map = { # sourced from: https://ftp.ncbi.nlm.nih.gov/pubchem/Bioassay/pcassay2.asn
             1: 'inactive',
             2: 'active',
             3: 'inconclusive',
@@ -81,7 +81,7 @@ class PubChemDB:
             pa.field('sunit', pa.string())
         ])
         
-        self.__possible_columns = [ # Sourced from: https://ftp.ncbi.nlm.nih.gov/pubchem/Bioassay/pcassay2.asn
+        self.__possible_columns = [ # sourced from: https://ftp.ncbi.nlm.nih.gov/pubchem/Bioassay/pcassay2.asn
             'sid',
             'sid-source',
             'version',
@@ -94,12 +94,13 @@ class PubChemDB:
             'date'
         ]
         
+        ########## Connect to DB ##########
         self.conn = sqlite3.connect('pubchem_temp.db')
         self.cur = self.conn.cursor()
         
-        # Remove substance table if it exists to avoid duplication
-        self.cur.execute('DROP TABLE IF EXISTS substance')
-        self.build_substance_db()
+        ########## Create tables ##########
+        self.cur.execute('DROP TABLE IF EXISTS substance') # remove substance table if it exists to avoid duplication
+        self.build_substance_table_and_add_to_db()
         
         # self.read_whole_dir()
         # # print('o')
@@ -314,7 +315,7 @@ class PubChemDB:
 
         return data_table
     
-    def build_substance_db(self):
+    def build_substance_table_and_add_to_db(self):
         for filename in os.listdir(self.sdf_dir_path):
             if filename.endswith('.sdf.gz'):
                 df = PandasTools.LoadSDF(os.path.join(self.sdf_dir_path, filename))
