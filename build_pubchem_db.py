@@ -97,6 +97,7 @@ class PubChemDB:
         self.conn = sqlite3.connect('pubchem_temp.db')
         self.cur = self.conn.cursor()
         
+        # Remove substance table if it exists to avoid duplication
         self.cur.execute('DROP TABLE IF EXISTS substance')
         self.build_substance_db()
         
@@ -142,7 +143,7 @@ class PubChemDB:
         return copy.copy(self.__possible_columns)
     
     @staticmethod
-    def batch(iterable: Iterable[str], n: int = 1) -> Generator[List[str], None, None]:
+    def _batch(iterable: Iterable[str], n: int = 1) -> Generator[List[str], None, None]:
         args = [iter(iterable)] * n
         yield from ([str(x) for x in tup if x is not None] for tup in zip_longest(*args))
     
@@ -163,7 +164,7 @@ class PubChemDB:
         # print(zip_dir_path)
         with zipfile.ZipFile(zip_dir_path, 'r') as zip_ref:
             # print(zip_ref)
-            for batch in PubChemDB.batch(zip_ref.namelist(), n=batch_size):
+            for batch in PubChemDB._batch(zip_ref.namelist(), n=batch_size):
                 jsons = []
                 # print(batch)
                 # Iterate over .zip zipped directory
@@ -191,27 +192,48 @@ class PubChemDB:
                     table = self.format_file(json)
                     
                     # TODO: Add functionality to store in database
-        
-    def format_file(self, file_json:dict) -> pa.lib.Table:
-        """
-        Formats a single PubChem FTP JSON (unzipped) file into a pyarrow table similar to that found in PubChem Web
+                    
+    @staticmethod
+    def _get_raw_data_from_file_json(file_json:dict) -> dict:
+        """Gets deepcopy of data dict from JSON dict tree. Raises error if data is not present
 
-        :param file_json: Loaded JSON file
+        :param file_json: JSON file loaded to memory
         :type file_json: dict
-        :return: Formatted pyarrow table
+        :raises KeyError: No data exists in file_json
+        :return: Deepcopy of raw data dict from nested JSON
+        :rtype: dict
+        """
+        if 'data' in file_json['PC_AssaySubmit'].keys():
+            return copy.deepcopy(file_json['PC_AssaySubmit']['data'])
+        else:
+            raise KeyError('No data in file_json')
+        
+    @staticmethod
+    def _get_raw_results_from_file_json(file_json:dict) -> dict:
+        """Gets deepcopy of results dict from JSON dict tree. Raises error if results is not present
+
+        :param file_json: JSON File loaded to memory
+        :type file_json: dict
+        :raises KeyError: No results exist in file_json
+        :return: Deepcopy of raw results dict from nested JSON
+        :rtype: dict
+        """
+        if 'results' in file_json['PC_AssaySubmit']['assay']['descr'].keys():
+            return copy.deepcopy(file_json['PC_AssaySubmit']['assay']['descr']['results'])
+        else:
+            raise KeyError('No results in file_json')
+        
+    @staticmethod 
+    def _format_raw_data_into_pa_table(raw_data:dict) -> pa.lib.Table:
+        """_summary_
+
+        :param data: _description_
+        :type data: dict
+        :return: _description_
         :rtype: pa.lib.Table
         """
-        # NO DATA, return null
-        if 'data' not in file_json['PC_AssaySubmit'].keys() or \
-            'results' not in file_json['PC_AssaySubmit']['assay']['descr'].keys():
-            return None
-
-        # Extract from file data
-        data_copy = copy.deepcopy(file_json['PC_AssaySubmit']['data'])
-        
-        ########## Format data_copy ##########
         pylist = []
-        for sid_entry in data_copy:
+        for sid_entry in raw_data:
             # NO DATA, skip
             if 'data' not in sid_entry.keys():
                 continue
@@ -229,17 +251,16 @@ class PubChemDB:
             sid_entry.update(sid_results)
             pylist.append(sid_entry)
             
-        data_table = pa.Table.from_pylist(pylist) # convert to table
-            
-        ########## Join data_copy w/ results_table on TIDs ##########
-        exclude_names = [i for i in self.possible_columns if i in data_table.column_names] # non-TID column names
-        # List of TID column names in data_table
-        old_names = [int(x) for x in data_table.column_names if x not in exclude_names]
-        # List of names mapped to TIDs in results_table
-        results_table = pa.Table.from_pylist(file_json['PC_AssaySubmit']['assay']['descr']['results'],
-                                             schema=self.results_schema)
-        
-        ########## Add units to name in results_table ##########
+        return pa.Table.from_pylist(pylist) # convert to table
+    
+    def _add_units_to_results_table_col_names(self, results_table:pa.lib.Table) -> pa.lib.Table:
+        """Adds units to column names according to self.unit_map. ex: 'IC50' -> 'IC50, M'
+
+        :param results_table: PyArrow table containing PubChem results data
+        :type results_table: pa.lib.Table
+        :return: PyArrow table containing PubChem results data with units in column names
+        :rtype: pa.lib.Table
+        """
         results_dict = results_table.to_pydict()
 
         for i in range(len(results_table)):
@@ -252,19 +273,45 @@ class PubChemDB:
             elif sunit is not None:
                 results_dict['name'][i] = f'{name}, {sunit}'
 
-        results_table = pa.Table.from_pydict(results_dict)
-
-        new_names = [x[1] for x in
-                     duckdb.sql(f'SELECT * FROM results_table WHERE tid IN {tuple(old_names)}').fetchall()]
+        return pa.Table.from_pydict(results_dict)
         
-        data_table = data_table.rename_columns(exclude_names + new_names)
+    def format_file(self, file_json:dict) -> pa.lib.Table:
+        """
+        Formats a single PubChem FTP JSON (unzipped) file into a pyarrow table similar to that found in PubChem Web
+
+        :param file_json: Loaded JSON file
+        :type file_json: dict
+        :return: Formatted pyarrow table
+        :rtype: pa.lib.Table
+        """
+        
+        ########## Get raw data and results nested within file_json ##########
+        try:
+            raw_data = PubChemDB._get_raw_data_from_file_json(file_json)
+            raw_results = PubChemDB._get_raw_results_from_file_json(file_json) # contains metadata
+        except KeyError: # no data in file_json
+            return None
+        
+        ########## Format raw data and results to PyArrow tables ##########
+        data_table = PubChemDB._format_raw_data_into_pa_table(raw_data)
+        results_table = pa.Table.from_pylist(raw_results, schema=self.results_schema)
+        
+        ########## Add units to each column name, ex: value --> value (unit) ##########
+        results_table = PubChemDB._add_units_to_results_table_col_names(results_table)
+            
+        ########## Replace integer codes in data_table w/ names in results_table by joining on TIDs ##########
+        non_tid_names = [i for i in self.possible_columns if i in data_table.column_names]
+        tid_integer_codes = [int(x) for x in data_table.column_names if x not in non_tid_names]
+        tid_names = [x[1] for x in
+                     duckdb.sql(f'SELECT * FROM results_table WHERE tid IN {tuple(tid_integer_codes)}').fetchall()]
+        data_table = data_table.rename_columns(non_tid_names + tid_names)
 
         ########## Convert integer coded activity to strings w/ meaning (same format as PubChem) ##########
         activity_col = pa.array(duckdb.sql(self.activity_map_sql_query).fetchall()).flatten()
         data_table = data_table.append_column('Activity', activity_col)
         # Remove old integer activity 'outcome' column
         data_table = data_table.remove_column(data_table.column_names.index('outcome'))
-        print(data_table.column_names)
+
         return data_table
     
     def build_substance_db(self):
