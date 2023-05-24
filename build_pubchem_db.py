@@ -3,10 +3,9 @@ import duckdb
 import pyarrow as pa
 import copy
 import zipfile
-from typing import List, Dict, Iterable, Generator
+from typing import List, Dict
 import gzip
 import os
-from itertools import zip_longest
 from tqdm import tqdm
 from rdkit.Chem import PandasTools
 import naclo
@@ -161,7 +160,7 @@ class PubChemDB(ABCChemDB):
         self.cur.execute('DROP TABLE IF EXISTS substance_errors')
         # Create substance_errors table (NOTE: substance_table is created in build_substance_table_and_add_to_db())
         self.cur.execute('CREATE TABLE substance_errors (filename TEXT PRIMARY KEY, error TEXT)')
-        self.build_substance_table_and_add_to_db()
+        self._build_substance_table_and_add_to_db()
         
     def _build_bioassay_table(self) -> None:
         # Remove existing tables
@@ -170,7 +169,8 @@ class PubChemDB(ABCChemDB):
         first_bioassay_flag_for_alter_table = True # if True, don't need to alter table to add new columns
             # initial schema = schema for first bioassay
         for zip_dir in tqdm(os.listdir(self.json_dir_path)[:10]): # NOTE: Limit to just first for testing
-            loader = PubChemDB._read_one_bioassay_zip_dir(os.path.join(self.json_dir_path, zip_dir), print_filename=False)
+            loader = PubChemDB._read_one_bioassay_zip_dir(os.path.join(self.json_dir_path, zip_dir),
+                                                          print_filename=False)
             
             for json in loader: # (batch_size) bioassays at a time
                 # for json in batch:
@@ -178,8 +178,6 @@ class PubChemDB(ABCChemDB):
                 
                 if not table: # table is None
                     continue
-                
-                print(table.to_pandas())
                 
                 if not first_bioassay_flag_for_alter_table:
                     for column in table.column_names:
@@ -202,7 +200,7 @@ class PubChemDB(ABCChemDB):
                 
                 # TODO: Add functionality to store in database
     
-    def build_substance_table_and_add_to_db(self):
+    def _build_substance_table_and_add_to_db(self):
         for filename in os.listdir(self.sdf_dir_path):
             if filename.endswith('.sdf.gz'):
                 try:
@@ -288,7 +286,7 @@ class PubChemDB(ABCChemDB):
         # Remove old integer activity 'outcome' column
         data_table = data_table.remove_column(data_table.column_names.index('outcome'))
         
-        ########## Add target info ##########
+        ########## Format target info and add as columns to data_table ##########
         for key, value in PubChemDB._format_raw_target(raw_target).items():
             column = pa.array([value] * len(data_table))
             data_table = data_table.add_column(data_table.num_columns, key, column)
@@ -327,8 +325,17 @@ class PubChemDB(ABCChemDB):
     
     @staticmethod
     def _get_raw_target_from_file_json(file_json:dict):
+        """Gets deepcopy of target dict from JSON dict tree. Raises error if target is not present
+
+        :param file_json: JSON File loaded to memory
+        :type file_json: dict
+        :raises KeyError: No target exists in file_json
+        :return: Deepcopy of raw target dict from nested JSON
+        :rtype: dict
+        """
         if 'target' in file_json['PC_AssaySubmit']['assay']['descr'].keys():
-            return file_json['PC_AssaySubmit']['assay']['descr']['target'][0]
+            return file_json['PC_AssaySubmit']['assay']['descr']['target'][0] # NOTE: it comes as a list of one \
+                # element for some reason
         else:
             raise KeyError('No target in file_json')
         
@@ -336,9 +343,9 @@ class PubChemDB(ABCChemDB):
     def _format_raw_data_into_pa_table(raw_data:dict) -> pa.lib.Table:
         """_summary_
 
-        :param data: _description_
+        :param data: Raw data info from JSON
         :type data: dict
-        :return: _description_
+        :return: Formatted table from the raw data
         :rtype: pa.lib.Table
         """
         pylist = []
@@ -386,6 +393,13 @@ class PubChemDB(ABCChemDB):
     
     @staticmethod
     def _format_raw_target(raw_target:dict) -> dict:
+        """Un-nests the 'mol_id' data and renames some keys to make them appropriate column names
+
+        :param raw_target: Raw target info from JSON, double level dict
+        :type raw_target: dict
+        :return: Reorganized target info, single level dict
+        :rtype: dict
+        """
         target_dict = {}
         target_dict['target'] = raw_target['name']
         
@@ -396,7 +410,6 @@ class PubChemDB(ABCChemDB):
         
         return target_dict
         
-
 
 if __name__ == '__main__':
     pc_db = PubChemDB('/Users/collabpharma/Desktop/JSON',
