@@ -105,6 +105,7 @@ class PubChemDB(ABCChemDB):
         ########## Connect to DB ##########
         self.conn = sqlite3.connect('pubchem_temp.db')
         self.cur = self.conn.cursor()
+        # TODO: Functionality for building a new DB called 'pubchem_temp' or wtvr
     
     @property
     def connection(self) -> sqlite3.Connection:
@@ -168,12 +169,17 @@ class PubChemDB(ABCChemDB):
         
         first_bioassay_flag_for_alter_table = True # if True, don't need to alter table to add new columns
             # initial schema = schema for first bioassay
-        for zip_dir in tqdm(os.listdir(self.json_dir_path)[:1]): # NOTE: Limit to just first for testing
-            loader = PubChemDB._read_one_bioassay_zip_dir(os.path.join(self.json_dir_path, zip_dir), print_filename=True)
+        for zip_dir in tqdm(os.listdir(self.json_dir_path)[:10]): # NOTE: Limit to just first for testing
+            loader = PubChemDB._read_one_bioassay_zip_dir(os.path.join(self.json_dir_path, zip_dir), print_filename=False)
             
             for json in loader: # (batch_size) bioassays at a time
                 # for json in batch:
                 table = self._format_bioassay_and_store_in_table(json)
+                
+                if not table: # table is None
+                    continue
+                
+                print(table.to_pandas())
                 
                 if not first_bioassay_flag_for_alter_table:
                     for column in table.column_names:
@@ -258,6 +264,7 @@ class PubChemDB(ABCChemDB):
         try:
             raw_data = PubChemDB._get_raw_data_from_file_json(file_json)
             raw_results = PubChemDB._get_raw_results_from_file_json(file_json) # contains metadata
+            raw_target = PubChemDB._get_raw_target_from_file_json(file_json)
         except KeyError: # no data in file_json
             return None
         
@@ -280,6 +287,11 @@ class PubChemDB(ABCChemDB):
         data_table = data_table.append_column('Activity', activity_col)
         # Remove old integer activity 'outcome' column
         data_table = data_table.remove_column(data_table.column_names.index('outcome'))
+        
+        ########## Add target info ##########
+        for key, value in PubChemDB._format_raw_target(raw_target).items():
+            column = pa.array([value] * len(data_table))
+            data_table = data_table.add_column(data_table.num_columns, key, column)
 
         return data_table
                     
@@ -312,6 +324,13 @@ class PubChemDB(ABCChemDB):
             return copy.deepcopy(file_json['PC_AssaySubmit']['assay']['descr']['results'])
         else:
             raise KeyError('No results in file_json')
+    
+    @staticmethod
+    def _get_raw_target_from_file_json(file_json:dict):
+        if 'target' in file_json['PC_AssaySubmit']['assay']['descr'].keys():
+            return file_json['PC_AssaySubmit']['assay']['descr']['target'][0]
+        else:
+            raise KeyError('No target in file_json')
         
     @staticmethod 
     def _format_raw_data_into_pa_table(raw_data:dict) -> pa.lib.Table:
@@ -364,6 +383,19 @@ class PubChemDB(ABCChemDB):
                 results_dict['name'][i] = f'{name}, {sunit}'
 
         return pa.Table.from_pydict(results_dict)
+    
+    @staticmethod
+    def _format_raw_target(raw_target:dict) -> dict:
+        target_dict = {}
+        target_dict['target'] = raw_target['name']
+        
+        for key, value in raw_target['mol_id'].items():
+            target_dict[f'target_{key}'] = value
+        
+        target_dict['target_description'] = raw_target['descr']
+        
+        return target_dict
+        
 
 
 if __name__ == '__main__':
