@@ -1,5 +1,6 @@
 import json
 import duckdb
+import pandas as pd
 import pyarrow as pa
 import copy
 import zipfile
@@ -11,13 +12,35 @@ from rdkit.Chem import PandasTools
 import naclo
 import sqlite3
 from ABCChemDB import ABCChemDB
+import re
+from pprint import pprint
+
+
+def sanitize_column_name(column_name:str, general_replacement:str='_'):
+    # Replace < with 'less_than'
+    sanitized_name = re.sub(r'<', 'less_than', column_name)
+    
+    # Replace > with 'greater_than'
+    sanitized_name = re.sub(r'>', 'greater_than', sanitized_name)
+    
+    # Replace = with 'equals'
+    sanitized_name = re.sub(r'=', 'equals', sanitized_name)
+    
+    # Replace other invalid characters with the specified replacement text
+    sanitized_name = re.sub(r'[^a-zA-Z0-9_, ]', general_replacement, sanitized_name)
+    
+    # Ensure the column name starts with a letter
+    if not sanitized_name[0].isalpha():
+        sanitized_name = general_replacement + sanitized_name
+    
+    return sanitized_name
 
 
 def print_table(cursor, table_name:str, n_rows:int=100) -> None:
     cursor.execute(f'SELECT * FROM {table_name}')
     rows = cursor.fetchall()
     # Print the table contents
-    for row in rows[:n_rows]:
+    for row in rows:
         print(row)
 
 
@@ -79,7 +102,7 @@ class PubChemDB(ABCChemDB):
                 ELSE NULl
             END AS Activity
             FROM data_table;
-            '''
+        '''
         
         self.__results_schema = pa.schema([
             pa.field('tid', pa.int64()),
@@ -154,7 +177,7 @@ class PubChemDB(ABCChemDB):
         return copy.deepcopy(self.__possible_non_tid_bioassay_columns)
 
     @property
-    def __possible_target_keys(self) -> List[str]:
+    def _possible_target_keys(self) -> List[str]:
         """
         Sourced from: https://ftp.ncbi.nlm.nih.gov/pubchem/Bioassay/pcassay2.asn
 
@@ -164,30 +187,43 @@ class PubChemDB(ABCChemDB):
         return copy.deepcopy(self.__possible_target_keys)
         
     def build(self) -> None:
+        ########## Build target tables ##########
+        # self._build_protein_table()
+        
         ########## Build substance table ##########
         # self._build_substance_table()
         
         ########## Build bioassay table ##########
         self._build_bioassay_table()
+        
+        # print_table(self.cur, 'bioassay')
         ########## Join substances to bioassay table ##########
         ########## Remove substance table ##########
         return None # NOTE: Maybe return a connection to the DB?
 
     def _build_substance_table(self) -> None:
-        # Remove existing tables
+        ########## Remove existing tables ##########
         self.cur.execute('DROP TABLE IF EXISTS substance') # remove substance table if it exists to avoid duplication
         self.cur.execute('DROP TABLE IF EXISTS substance_errors')
-        # Create substance_errors table (NOTE: substance_table is created in build_substance_table_and_add_to_db())
+        ########## Create substance_errors table (NOTE: substance_table is created in \
+            # build_substance_table_and_add_to_db()) ##########
         self.cur.execute('CREATE TABLE substance_errors (filename TEXT PRIMARY KEY, error TEXT)')
         self._build_substance_table_and_add_to_db()
         
+    def _build_protein_table(self) -> None:
+        path = '/Users/collabpharma/Desktop/protein2xrefs'
+        df = pd.read_csv(path, delimiter='\t')
+        df.to_sql('protein', self.conn, if_exists='replace', index=False)
+        
     def _build_bioassay_table(self) -> None:
+        self._clear_bioassay_target_relationship_table_and_specify_schema() # create table but don't yet populate
+        
         # Remove existing tables
         self.cur.execute('DROP TABLE IF EXISTS bioassay')
         
         first_bioassay_flag_for_alter_table = True # if True, don't need to alter table to add new columns
             # initial schema = schema for first bioassay
-        for zip_dir in tqdm(os.listdir(self.json_dir_path)[:10]): # NOTE: Limit to just first for testing
+        for zip_dir in tqdm(os.listdir(self.json_dir_path)): # NOTE: Limit to just first few for testing
             loader = PubChemDB._read_one_bioassay_zip_dir(os.path.join(self.json_dir_path, zip_dir),
                                                           print_filename=False)
             
@@ -199,11 +235,20 @@ class PubChemDB(ABCChemDB):
                     continue
                 
                 if not first_bioassay_flag_for_alter_table:
+                    existing_columns = [x[1] for x in self.conn.execute(f'PRAGMA table_info(bioassay)').fetchall()]
+                    print(len(existing_columns))
+                    
                     for column in table.column_names:
-                        if column not in [x[1] for x in self.conn.execute(f'PRAGMA table_info(bioassay)').fetchall()]:
-                            column_type = table.schema.field_by_name(column).type
-                            self.conn.execute(f"ALTER TABLE bioassay ADD COLUMN '{column}' {column_type}")
-
+                        if column not in existing_columns:
+                            column_type = table.schema.field(column).type
+                            
+                            # print(column)
+                            # print(sanitize_column_name(column))
+                            # print(table.to_pandas())
+                            # print(f"ALTER TABLE bioassay ADD COLUMN '{column}' \
+                            #     {column_type}")
+                            self.conn.execute(f'ALTER TABLE bioassay ADD COLUMN "{column}" \
+                                {column_type}')
 
                 table.to_pandas().to_sql('bioassay', self.conn, if_exists='append', index=False)
                 first_bioassay_flag_for_alter_table = False
@@ -218,6 +263,18 @@ class PubChemDB(ABCChemDB):
                 # TODO: Add targets as a column
                 
                 # TODO: Add functionality to store in database
+                
+    def _clear_bioassay_target_relationship_table_and_specify_schema(self):
+        # Remove existing tables
+        self.cur.execute('DROP TABLE IF EXISTS bioassay_target_relationship')
+        create_table_sql = '''
+            CREATE TABLE bioassay_target_relationship (
+                bioassay_id INTEGER,
+                uniprot_id TEXT
+            )
+        '''
+        self.cur.execute(create_table_sql)
+        self.conn.commit()
     
     def _build_substance_table_and_add_to_db(self):
         for filename in os.listdir(self.sdf_dir_path):
@@ -225,7 +282,7 @@ class PubChemDB(ABCChemDB):
                 try:
                     df = PandasTools.LoadSDF(os.path.join(self.sdf_dir_path, filename))
                     # Delete unnecessary columns
-                    df = df[['PUBCHEM_SUBSTANCE_ID', 'ROMol']]
+                    df = df[['substance_id', 'ROMol']]
                     # Add SMILES from MOLs
                     df = naclo.dataframes.df_mols_2_smiles(df, 'ROMol', 'SMILES')
                     # Remove MOLs, only keep SMILES
@@ -267,7 +324,7 @@ class PubChemDB(ABCChemDB):
     
                 yield json.loads(contents_str)
                 
-    def _format_bioassay_and_store_in_table(self, file_json:dict) -> pa.lib.Table:
+    def _format_bioassay_and_store_in_table(self, file_json:dict, protein_only:bool=True) -> pa.lib.Table:
         """
         Formats a single PubChem FTP JSON (unzipped) file into a pyarrow table similar to that found in PubChem Web
 
@@ -276,14 +333,23 @@ class PubChemDB(ABCChemDB):
         :return: Formatted pyarrow table
         :rtype: pa.lib.Table
         """
-        
         ########## Get raw data and results nested within file_json ##########
         try:
             raw_data = PubChemDB._get_raw_data_from_file_json(file_json)
             raw_results = PubChemDB._get_raw_results_from_file_json(file_json) # contains metadata
-            raw_target = PubChemDB._get_raw_target_from_file_json(file_json)
+            formatted_target = self._format_raw_target(PubChemDB._get_raw_target_from_file_json(file_json))
         except KeyError: # no data in file_json
             return None
+        
+        ########## Check if target is protein ##########
+        if protein_only:
+            if 'target_protein_accession' not in formatted_target.keys(): # not protein
+                return None
+            else:
+                bioassay_id = file_json['PC_AssaySubmit']['assay']['descr']['aid']['id']
+                self._populate_bioassay_target_relationship_table(bioassay_id,
+                                                                  formatted_target['target_protein_accession'])
+                
         
         ########## Format raw data and results to PyArrow tables ##########
         data_table = PubChemDB._format_raw_data_into_pa_table(raw_data)
@@ -306,11 +372,21 @@ class PubChemDB(ABCChemDB):
         data_table = data_table.remove_column(data_table.column_names.index('outcome'))
         
         ########## Format target info and add as columns to data_table ##########
-        for key, value in PubChemDB._format_raw_target(raw_target).items():
-            column = pa.array([value] * len(data_table))
-            data_table = data_table.add_column(data_table.num_columns, key, column)
+        # for key, value in self._format_raw_target(raw_target).items():
+        #     column = pa.array([value] * len(data_table))
+        #     data_table = data_table.add_column(data_table.num_columns, key, column)
+        
+        ########## Make the column names lowercase ##########
+        columns_lower = [column.lower() for column in data_table.column_names]
+        data_table = pa.Table.from_arrays(data_table.columns, schema=pa.schema([(column_lower, field.type) for
+                                                                                column_lower, field in
+                                                                                zip(columns_lower, data_table.schema)]))
 
         return data_table
+    
+    def _populate_bioassay_target_relationship_table(self, bioassay_id:int, uniprot_id:str) -> None:
+        self.cur.execute('INSERT INTO bioassay_target_relationship (bioassay_id, uniprot_id) VALUES (?, ?)',
+                         (bioassay_id, uniprot_id))
                     
     @staticmethod
     def _get_raw_data_from_file_json(file_json:dict) -> dict:
@@ -356,7 +432,12 @@ class PubChemDB(ABCChemDB):
         :rtype: dict
         """
         if 'target' in file_json['PC_AssaySubmit']['assay']['descr'].keys():
-            return file_json['PC_AssaySubmit']['assay']['descr']['target'][0] # NOTE: it comes as a list of one \
+            try:
+                return file_json['PC_AssaySubmit']['assay']['descr']['target'][0] # NOTE: it comes as a list of one \
+            except Exception:
+                print(file_json['PC_AssaySubmit']['assay']['descr']['target'])
+                raise IndexError('ape')
+                
                 # element for some reason
         else:
             raise KeyError('No target in file_json')
@@ -426,12 +507,15 @@ class PubChemDB(ABCChemDB):
         """
         target_dict = {}
         
-        for key in self._possible_non_tid_bioassay_columns():
-            if key == 'mol_id': # un-nest from double-level to single-level dict
-                for key, value in raw_target['mol_id'].items():
-                    target_dict[f'target_{key}'] = value
-            else:
-                target_dict[f'target_{key}'] = raw_target[key]
+        for key in self._possible_target_keys:
+            if key in raw_target.keys():
+                if key == 'mol_id': # un-nest from double-level to single-level dict
+                    for key, value in raw_target['mol_id'].items():
+                        target_dict[f'target_{key}'] = value
+                elif key == 'organism':
+                    continue # skip, its annoying to store; TODO: figure out how to store this
+                else:
+                    target_dict[f'target_{key}'] = raw_target[key]
         
         return target_dict
         
@@ -440,4 +524,3 @@ if __name__ == '__main__':
     pc_db = PubChemDB('/Users/collabpharma/Desktop/JSON',
                       '/Users/collabpharma/Desktop/SDF')#/0001001_0002000.zip'
     pc_db.build()
-    
