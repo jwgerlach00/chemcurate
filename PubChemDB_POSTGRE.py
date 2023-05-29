@@ -243,7 +243,7 @@ class PubChemDB(ABCChemDB):
             filenames = [filename for filename in zip_ref.namelist() if filename.endswith('.json.gz')]
 
             for filename in filenames:
-                print(filename)
+                # print(filename)
                 # Read .json.gz zipped file
                 with zip_ref.open(filename, 'r') as file:
                     contents = gzip.decompress(file.read())
