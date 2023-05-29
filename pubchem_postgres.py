@@ -55,7 +55,7 @@ class PubChemDB(ABCChemDB):
         self.__possible_non_tid_bioassay_columns = [ # sourced from: \
             # https://ftp.ncbi.nlm.nih.gov/pubchem/Bioassay/pcassay2.asn
             'sid',
-            'sid-source',
+            'sid_source', # source says "sid-source" but it is actually "sid_source"
             'version',
             'comment',
             'outcome',
@@ -215,7 +215,7 @@ class PubChemDB(ABCChemDB):
                 
                 # target_info = PubChemDB._get_target_info_from_bioassay_json(bioassay_json)
                 
-                # self._add_entry_to_bioassay_table(bioassay_json)
+                self._protein_only_add_entry_to_bioassay_table(bioassay_json)
                 self._add_entry_to_activity_table(bioassay_json)
     
     @staticmethod
@@ -248,14 +248,14 @@ class PubChemDB(ABCChemDB):
     
                 yield json.loads(contents_str)
                 
-    def _add_entry_to_bioassay_table(self, json_bioassay:dict) -> None:
+    def _protein_only_add_entry_to_bioassay_table(self, json_bioassay:dict) -> None:
         '''TODO: fails if not protein only'''
         bioassay_id = json_bioassay['PC_AssaySubmit']['assay']['descr']['aid']['id']
         
         try:
             target_info = json_bioassay['PC_AssaySubmit']['assay']['descr']['target'][0] # NOTE: it comes as a list of \
                 # one element for some reason
-        except (KeyError, IndexError): # KeyError for ['target'] or IndexError for [0]
+        except (KeyError, IndexError): # KeyError for ['target'] or IndexError for [0], assume no target data
             self.cursor.execute('INSERT INTO bioassay (bioassay_id) VALUES (%s)', (bioassay_id,)) # just the ID
             return
         
@@ -268,10 +268,10 @@ class PubChemDB(ABCChemDB):
         try:
             self.cursor.execute('INSERT INTO bioassay (bioassay_id, protein_accession) VALUES (%s, %s)',
                                 (bioassay_id, protein_accession))
-        except psycopg2.errors.ForeignKeyViolation:
+        except psycopg2.errors.ForeignKeyViolation: # the protein accession is not in the protein table
             self.connection.rollback() # rollback to previous commit due to foreign key violation
             self.cursor.execute('INSERT INTO bioassay (bioassay_id) VALUES (%s)', (bioassay_id,))
-            print(bioassay_id, protein_accession)
+
         self.connection.commit()
         
     def _add_entry_to_activity_table(self, json_bioassay:dict) -> None:
