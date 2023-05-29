@@ -21,6 +21,7 @@ from rdkit.rdBase import LogStatus as RDLogStatus
 from sqlalchemy import create_engine
 import numpy as np
 import json
+import hashlib
 
 
 def rdkit_stfu(func):
@@ -40,8 +41,8 @@ def rdkit_stfu(func):
 
 class PubChemDB(ABCChemDB):
     def __init__(self, bioassay_json_dir_path:str, substance_sdf_dir_path:str, protein2xrefs_path:str) -> None:
-        self.json_dir_path = bioassay_json_dir_path
-        self.sdf_dir_path = substance_sdf_dir_path
+        self.bioassay_json_dir_path = bioassay_json_dir_path
+        self.substance_sdf_dir_path = substance_sdf_dir_path
         self.protein2xrefs_path = protein2xrefs_path
         
         self.__activity_outcome_map = { # sourced from: https://ftp.ncbi.nlm.nih.gov/pubchem/Bioassay/pcassay2.asn
@@ -113,7 +114,7 @@ class PubChemDB(ABCChemDB):
         Sourced from: https://ftp.ncbi.nlm.nih.gov/pubchem/Bioassay/pcassay2.asn
 
         :return: Mapper from INTEGER code to STRING activity class
-        :rtype: Dict[int, str]
+        :rtype: Dict[int, str]d
         """
         return copy.deepcopy(self.__activity_outcome_map)
     
@@ -170,11 +171,11 @@ class PubChemDB(ABCChemDB):
         self.cursor.execute('DELETE FROM substance_errors')
         self.connection.commit()
 
-        for filename in tqdm(os.listdir(self.sdf_dir_path)):
+        for filename in tqdm(os.listdir(self.substance_sdf_dir_path)):
             if filename.endswith('.sdf.gz'):
                 print(filename)
                 try:
-                    df = PandasTools.LoadSDF(os.path.join(self.sdf_dir_path, filename))
+                    df = PandasTools.LoadSDF(os.path.join(self.substance_sdf_dir_path, filename))
                     # Delete unnecessary columns
                     df = df[['PUBCHEM_SUBSTANCE_ID', 'ROMol']]
                     # Add SMILES from MOLs
@@ -203,8 +204,12 @@ class PubChemDB(ABCChemDB):
         self.cursor.execute('DELETE FROM activity')
         self.connection.commit()
         
-        for zip_dir in tqdm(os.listdir(self.json_dir_path)): # NOTE: Limit to just first few for testing
-            loader = PubChemDB._bioassay_zip_dir_loader(os.path.join(self.json_dir_path, zip_dir), print_filename=False)
+        for zip_dir in tqdm(os.listdir(self.bioassay_json_dir_path)): # NOTE: Limit to just first few for testing
+            try:
+                loader = PubChemDB._bioassay_zip_dir_loader(os.path.join(self.bioassay_json_dir_path, zip_dir), print_filename=False) # 28%
+            except Exception as e:
+                print(f'failed to load zipdir: {zip_dir}')
+                continue # skip
             
             # for bioassay_json in loader:
                 # if bioassay_json ['PC_AssaySubmit']['assay']['descr']['target'][0]['protein_accession']
@@ -238,10 +243,15 @@ class PubChemDB(ABCChemDB):
             filenames = [filename for filename in zip_ref.namelist() if filename.endswith('.json.gz')]
 
             for filename in filenames:
+                print(filename)
                 # Read .json.gz zipped file
                 with zip_ref.open(filename, 'r') as file:
                     contents = gzip.decompress(file.read())
-                    contents_str = contents.decode('utf-8')
+                    try:
+                        contents_str = contents.decode('utf-8')
+                    except Exception as e:
+                        print(filename)
+                        continue
                     # Load the JSON data into a Python object
                     if print_filename: # Print filename
                         print(f'LOADING: {filename}')
