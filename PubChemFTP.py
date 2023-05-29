@@ -6,7 +6,7 @@ import hashlib
 
 
 class PubChemFTP():
-    def __init__(self, absolute_out_dir:str, overwrite:bool=False):
+    def __init__(self, absolute_out_dir:str, overwrite:bool=False) -> None:
         self.__absolute_out_dir = absolute_out_dir
         self.__overwrite = overwrite
         
@@ -26,7 +26,7 @@ class PubChemFTP():
         self.__ftp = FTP(ftp_host)
         self.__ftp.login(self.__ftp_user, self.__ftp_password)
     
-    def download_all(self, verbose:bool=True):
+    def download_all(self, verbose:bool=True) -> None:
         """
         Downloads all relevent data from PubChem FTP server.
 
@@ -66,7 +66,10 @@ class PubChemFTP():
         :type verbose: bool, optional
         """
         
+        # Make directory locally, change directory on server, get aboslute path to directory locally
         protein_target_out_dir = self._cwd_on_server_and_make_dir_locally(self.__protein_target_ftp_directory)
+        
+        # Path to the single file that needs to be downloaded
         file_path = os.path.join(protein_target_out_dir, self.__protein_target_filename)
         
         with open(file_path, 'wb') as file:
@@ -75,9 +78,21 @@ class PubChemFTP():
             print(f'Downloaded: {self.__protein_target_filename}')
 
     def download_substance_sdfs(self, verbose:bool=True, max_bad_checksum_download_attempts:int=5) -> None:
+        """
+        Downloads all substance files as SDFs (zipped using gzip) as structured in the PubChem FTP server. Uses md5
+        checksum files provided by PubChem to verify download integrity.
+
+        :param verbose: Whether to print status info to console, defaults to True
+        :type verbose: bool, optional
+        :param max_bad_checksum_download_attempts: The maxmimum number of attempts to download a file with a bad md5
+            checksum, defaults to 5
+        :type max_bad_checksum_download_attempts: int, optional
+        """
+        
+        # Make directory locally, change directory on server, get aboslute path to directory locally
         substance_sdf_out_dir = self._cwd_on_server_and_make_dir_locally(self.__substance_sdf_ftp_directory)
         
-        filenames = list(set([filename.split('.')[0] for filename in self.__ftp.nlst()])) # Remove extensions and \
+        filenames = list(set([filename.split('.')[0] for filename in self.__ftp.nlst()])) # remove extensions and \
             # merge duplicates so that .sdf.gz and .sdf.gz.md5 are iterated at the same time
 
         # Download each file
@@ -90,13 +105,13 @@ class PubChemFTP():
                         self.__ftp.retrbinary(f'RETR {filename}', file.write)
                     continue
             
-                else:
-                    file_path_no_extension = os.path.join(substance_sdf_out_dir, filename)
-                    
-                    # Try (max_bad_checksum_download_attempts) times to download the file if checksum fails
+                else: # not a README
+                    # Try to download up to (max_bad_checksum_download_attempts) times if checksum fails
                     for i in range(max_bad_checksum_download_attempts):
+                        # Open and write SDF file, should overwrite if already exists in case of bad checksum
                         with open(f'{file_path_no_extension}.sdf.gz', 'wb') as file:
                             self.__ftp.retrbinary(f'RETR {filename}.sdf.gz', file.write)
+                        # Open and write MD5 file, should overwrite if already exists in case of bad checksum
                         with open(f'{file_path_no_extension}.sdf.gz.md5', 'wb') as file:
                             self.__ftp.retrbinary(f'RETR {filename}.sdf.gz.md5', file.write)
                             
@@ -105,7 +120,8 @@ class PubChemFTP():
                             break
                         elif verbose:
                             print(f'Bad checksum for: {filename}. Trying again...')
-                            
+                        
+                        # If we've reached the max number of attempts, skip this file
                         if i == max_bad_checksum_download_attempts - 1:
                             print(f'Could not download {filename} after {max_bad_checksum_download_attempts} attempts. \
                                 Skipping...')
@@ -116,6 +132,14 @@ class PubChemFTP():
                 print(f'Error downloading {filename}: {e}')
         
     def download_bioassay_jsons(self, verbose:bool=True) -> None:
+        """
+        Downloads all bioassays as JSON files (zipped using gzip) as structured in the PubChem FTP server.
+
+        :param verbose: Whether to print status info to console, defaults to True
+        :type verbose: bool, optional
+        """
+        
+        # Make directory locally, change directory on server, get aboslute path to directory locally
         bioassay_json_out_dir = self._cwd_on_server_and_make_dir_locally(self.__bioassay_json_ftp_directory)
 
         # Retrieve a list of all file names in the directory
@@ -132,10 +156,10 @@ class PubChemFTP():
             except Exception as e:
                 print(f'Error downloading {filename}: {e}')
                 
-    def _make_dir(self):
+    def _make_dir(self) -> None:
         """
-        Conditionally create a directory for the output files based on whether the directory exists and whether it is \
-            overwritable.
+        Conditionally create a directory for the output files based on whether the directory exists and whether it is 
+        overwritable.
 
         :raises ValueError: Overwrite is False but directory is not empty
         """
@@ -149,29 +173,36 @@ class PubChemFTP():
             shutil.rmtree(self.__absolute_out_dir)
             os.makedirs(self.__absolute_out_dir)
             
-    def _cwd_on_server_and_make_dir_locally(self, component_dir:str) -> str:
+    def _cwd_on_server_and_make_dir_locally(self, dir_name:str) -> str:
+        """
+        Changes the current working directory on the FTP server to the specified directory and creates a directory
+        locally with the same hierarchical structure. Returns the absolute path to the directory locally.
+
+        :param dir_name: Name of directory
+        :type dir_name: str
+        :return: Absolute path to the directory locally
+        :rtype: str
+        """
         # Change to the directory on the FTP server
-        self.__ftp.cwd('/' + component_dir) # preface w/ root ('/') to clear previous cwd operations
+        self.__ftp.cwd('/' + dir_name) # preface w/ root ('/') to clear previous cwd operations
         
         # Make the directory locally
-        out_dir = os.path.join(self.__absolute_out_dir, component_dir)
+        out_dir = os.path.join(self.__absolute_out_dir, dir_name)
         os.makedirs(out_dir)
         
         return out_dir
             
-    def _substance_sdf_md5_checksum(self, filename:str) -> bool:
+    def _substance_sdf_md5_checksum(self, filename_no_extension:str) -> bool:
         """
         Checks the MD5 checksum of a Substance SDF file against the MD5 checksum. Assumes that the MD5 checksum file is
         in the same directory as the SDF file and has the same name as the SDF file, but with a '.md5' extension.
 
-        :param substance_sdf_dir_path: _description_
-        :type substance_sdf_dir_path: str
-        :param filename: _description_
-        :type filename: str
-        :return: _description_
+        :param filename_no_extension: Name of file, not path, before ('.')
+        :type filename_no_extension: str
+        :return: Status of whether or not the MD5 checksums match
         :rtype: bool
         """
-        file_stem = os.path.join(self.__absolute_out_dir, self.__substance_sdf_ftp_directory, filename)
+        file_stem = os.path.join(self.__absolute_out_dir, self.__substance_sdf_ftp_directory, filename_no_extension)
         calc_md5 = self._calculate_md5(f'{file_stem}.sdf.gz')
         read_md5 = open(f'{file_stem}.sdf.gz.md5', 'r').read().split()[0]
         return calc_md5 == read_md5
