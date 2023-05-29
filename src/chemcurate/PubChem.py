@@ -26,7 +26,15 @@ class PubChem(__Base):
     def __init__(self, uniprot_ids:list) -> None:
         super(PubChem, self).__init__()
         
-        assay_ids = {uniprot_id: (PubChem.get_assay_ids(uniprot_id), PubChem._sleep())[0] for uniprot_id in uniprot_ids}
+        assay_ids = {}
+        for uniprot_id in uniprot_ids:
+            try:
+                assay_ids[uniprot_id] = PubChem.get_assay_ids(uniprot_id)
+                PubChem.__sleep()[0]
+            except:
+                pass
+        print(assay_ids)
+        # assay_ids = {uniprot_id: (PubChem.get_assay_ids(uniprot_id), PubChem._sleep())[0] for uniprot_id in uniprot_ids}
         concise_assay_dfs = {uniprot_id: PubChem.get_concise_assay_dfs(assay_ids[uniprot_id])
                              for uniprot_id in uniprot_ids}
         sid_records = {uniprot_id: PubChem.get_sid_records(concise_assay_dfs[uniprot_id]['SID'].tolist())
@@ -42,7 +50,8 @@ class PubChem(__Base):
         self.df = pd.concat(concise_assay_dfs.values())
 
         # Add a column with dictionary keys as values
-        self.df['uniprot_id'] = pd.Series(concise_assay_dfs.keys()).repeat(len(self.df) // len(self.df))
+        uniprot_col = [[uniprot_id]*len(concise_assay_dfs[uniprot_id]) for uniprot_id in concise_assay_dfs.keys()]
+        self.df['uniprot_id'] = [item for sublist in uniprot_col for item in sublist]
         
         # self.df = pd.concat(self.concise_assay_dfs)
         self.df.reset_index(drop=True, inplace=True)
@@ -63,6 +72,7 @@ class PubChem(__Base):
     @staticmethod
     def get_assay_ids(uniprot_id:str) -> List[str]:
         url = f'{PubChem._url_stem}/bioassay/target/ProteinName/{uniprot_id}/aids/JSON'
+        print(url)
         return requests.get(url).json()['IdentifierList']['AID']
     
     @staticmethod
@@ -123,6 +133,8 @@ class PubChem(__Base):
 if __name__ == '__main__':
     # uniprot_ids = ['P22303'] #['P50129', 'P10100']
     uniprot_ids = ['P50129']#, 'Q13936']
+    # uniprot_ids = ['P03356', 'P03333']
     pc = PubChem(uniprot_ids)
     print(pc)
     print(len(pc))
+    pc.df.to_csv('pubchem_sample.csv', index=False)
