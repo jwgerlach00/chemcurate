@@ -16,6 +16,8 @@ class PubChemFTP():
         self.__protein_target_filename = 'protein2xrefs.gz'
         self.__substance_sdf_ftp_directory = 'pubchem/Substance/CURRENT-Full/SDF/'
         self.__bioassay_json_ftp_directory = 'pubchem/Bioassay/JSON/'
+        self.__bioassay_asn_metadata_ftp_directory = 'pubchem/Bioassay/'
+        self.__bioassay_asn_metadata_filename = 'pcassay2.asn'
         
         # FTP connection details
         ftp_host = 'ftp.ncbi.nlm.nih.gov'
@@ -57,6 +59,13 @@ class PubChemFTP():
             self.download_bioassay_jsons(verbose=verbose)
         except Exception as e:
             print(f'Error downloading bioassay JSONs: {e}')
+        
+        if verbose:
+            print('Downloading bioassay ASN metadata...')
+        try:
+            self.download_bioassay_asn_metadata(verbose=verbose)
+        except Exception as e:
+            print(f'Error downloading bioassay ASN metadata: {e}')
             
     def download_protein_target_data(self, verbose:bool=True) -> None:
         """
@@ -155,6 +164,28 @@ class PubChemFTP():
                     print(f'Downloaded: {filename}')
             except Exception as e:
                 print(f'Error downloading {filename}: {e}')
+                
+    def download_bioassay_asn_metadata(self, verbose:bool=True) -> None:
+        """
+        Downloads the ASN structure which defines certain integer-encodings in the bioassay data. This is not currently 
+        used within the PubChemDB module because the data structure is currently presumed unreadable. These values have
+        been hard-coded into the PubChemDB module in.
+
+        :param verbose: Whether to print status to console, defaults to True
+        :type verbose: bool, optional
+        """
+        
+        # Make directory locally, change directory on server, get aboslute path to directory locally
+        bioassay_asn_metadata_out_dir = self._cwd_on_server_and_make_dir_locally(
+            self.__bioassay_asn_metadata_ftp_directory)
+        
+        # Path to the single file that needs to be downloaded
+        file_path = os.path.join(bioassay_asn_metadata_out_dir, self.__bioassay_asn_metadata_filename)
+        
+        with open(file_path, 'wb') as file:
+            self.__ftp.retrbinary(f'RETR {self.__bioassay_asn_metadata_filename}', file.write)
+        if verbose:
+            print(f'Downloaded: {self.__bioassay_asn_metadata_filename}')
                 
     def _make_dir(self) -> None:
         """
