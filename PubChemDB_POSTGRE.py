@@ -1,7 +1,5 @@
 import json
-import duckdb
 import pandas as pd
-import pyarrow as pa
 import copy
 import zipfile
 from typing import List, Dict
@@ -10,18 +8,13 @@ import os
 from tqdm import tqdm
 from rdkit.Chem import PandasTools
 import naclo
-import sqlite3
 from ABCChemDB import ABCChemDB
-import re
-from pprint import pprint
 import psycopg2
 from functools import wraps
 from rdkit import RDLogger
 from rdkit.rdBase import LogStatus as RDLogStatus
-from sqlalchemy import create_engine
 import numpy as np
 import json
-import hashlib
 
 
 def rdkit_stfu(func):
@@ -243,14 +236,12 @@ class PubChemDB(ABCChemDB):
             filenames = [filename for filename in zip_ref.namelist() if filename.endswith('.json.gz')]
 
             for filename in filenames:
-                # print(filename)
                 # Read .json.gz zipped file
                 with zip_ref.open(filename, 'r') as file:
                     contents = gzip.decompress(file.read())
                     try:
                         contents_str = contents.decode('utf-8')
                     except Exception as e:
-                        print(filename)
                         continue
                     # Load the JSON data into a Python object
                     if print_filename: # Print filename
