@@ -3,6 +3,7 @@ import shutil
 from ftplib import FTP
 from tqdm import tqdm
 import hashlib
+import zipfile
 
 
 class PubChemFTP():
@@ -18,6 +19,9 @@ class PubChemFTP():
         self.__bioassay_json_ftp_directory = 'pubchem/Bioassay/JSON/'
         self.__bioassay_asn_metadata_ftp_directory = 'pubchem/Bioassay/'
         self.__bioassay_asn_metadata_filename = 'pcassay2.asn'
+        
+        # Path to send stuff that fails error checking
+        self.__bad_file_path = os.path.join(self.__absolute_out_dir, 'bad_files')
         
         # FTP connection details
         ftp_host = 'ftp.ncbi.nlm.nih.gov'
@@ -86,16 +90,16 @@ class PubChemFTP():
         if verbose:
             print(f'Downloaded: {self.__protein_target_filename}')
 
-    def download_substance_sdfs(self, verbose:bool=True, max_bad_checksum_download_attempts:int=5) -> None:
+    def download_substance_sdfs(self, max_bad_checksum_download_attempts:int=5, verbose:bool=True) -> None:
         """
         Downloads all substance files as SDFs (zipped using gzip) as structured in the PubChem FTP server. Uses md5
         checksum files provided by PubChem to verify download integrity.
 
-        :param verbose: Whether to print status info to console, defaults to True
-        :type verbose: bool, optional
         :param max_bad_checksum_download_attempts: The maxmimum number of attempts to download a file with a bad md5
             checksum, defaults to 5
         :type max_bad_checksum_download_attempts: int, optional
+        :param verbose: Whether to print status info to console, defaults to True
+        :type verbose: bool, optional
         """
         
         # Make directory locally, change directory on server, get aboslute path to directory locally
@@ -127,20 +131,30 @@ class PubChemFTP():
                         # Check MD5
                         if self._substance_sdf_md5_checksum(filename.split('.')[0]): # just the name, no extension
                             break
+                        elif i == max_bad_checksum_download_attempts - 1: # We've reached the max number of attempts \
+                            # so skip this file
+                            print(f'Could not download substance SDF: {filename} after \
+                                {max_bad_checksum_download_attempts} attempts. Skipping...')
+
+                            # Move bad files away
+                            os.rename(f'{file_path_no_extension}.sdf.gz', os.path.join(self.__bad_file_path,
+                                                                                       f'{filename}.sdf.gz'))
+                            os.rename(f'{file_path_no_extension}.sdf.gz.md5', os.path.join(self.__bad_file_path,
+                                                                                           f'{filename}.sdf.gz.md5'))
                         elif verbose:
                             print(f'Bad checksum for: {filename}. Trying again...')
                         
-                        # If we've reached the max number of attempts, skip this file
+
                         if i == max_bad_checksum_download_attempts - 1:
-                            print(f'Could not download {filename} after {max_bad_checksum_download_attempts} attempts. \
-                                Skipping...')
+                            print(f'Could not download substance SDF: {filename} after \
+                                {max_bad_checksum_download_attempts} attempts. Skipping...')
                     
                     if verbose:
                         print(f'Downloaded: {filename}')
             except Exception as e:
                 print(f'Error downloading {filename}: {e}')
-        
-    def download_bioassay_jsons(self, verbose:bool=True) -> None:
+                
+    def download_bioassay_jsons(self, max_bad_zip_file_attempts:int=5, verbose:bool=True) -> None:
         """
         Downloads all bioassays as JSON files (zipped using gzip) as structured in the PubChem FTP server.
 
@@ -152,14 +166,37 @@ class PubChemFTP():
         bioassay_json_out_dir = self._cwd_on_server_and_make_dir_locally(self.__bioassay_json_ftp_directory)
 
         # Retrieve a list of all file names in the directory
-        filenames = self.__ftp.nlst()
+        filenames = self.__ftp.nlst()        
 
         # Download each file
         for filename in (tqdm(filenames) if verbose else filenames):
+            file_path = os.path.join(bioassay_json_out_dir, filename)
+            
             try:
-                file_path = os.path.join(bioassay_json_out_dir, filename)
-                with open(file_path, 'wb') as file:
-                    self.__ftp.retrbinary(f'RETR {filename}', file.write)
+                if filename.startswith('README'): # README file, no error checking; Saved bc we still want to preserve \
+                    # these
+                    with open(file_path, 'wb') as file: # README has no extension already
+                        self.__ftp.retrbinary(f'RETR {filename}', file.write)
+                    continue
+                
+                # Try to download up to (max_bad_zip_file_attempts) times if error check fails
+                for i in range(max_bad_zip_file_attempts):
+                    with open(file_path, 'wb') as file:
+                        self.__ftp.retrbinary(f'RETR {filename}', file.write)
+                    
+                    # Try to open the zipped directory, if it can't open, re-download
+                    if PubChemFTP._error_check_bioassay_json(file_path):
+                        break
+                    elif i == max_bad_zip_file_attempts - 1: # We've reached the max number of attempts so skip this \
+                        # file
+                        print(f'Could not download bioassay JSON: {filename} after {max_bad_zip_file_attempts} \
+                            attempts. Skipping...')
+                        
+                        # Move the bad file away
+                        os.rename(file_path, os.path.join(self.__bad_file_path, filename))
+                    elif verbose:
+                        print(f'Bad error check for: {filename}. Trying again...')
+
                 if verbose:
                     print(f'Downloaded: {filename}')
             except Exception as e:
@@ -203,6 +240,8 @@ class PubChemFTP():
         else: # delete directory and recreate if overwrite is True
             shutil.rmtree(self.__absolute_out_dir)
             os.makedirs(self.__absolute_out_dir)
+            
+        os.makedirs(self.__bad_file_path)
             
     def _cwd_on_server_and_make_dir_locally(self, dir_name:str) -> str:
         """
@@ -253,6 +292,14 @@ class PubChemFTP():
             for chunk in iter(lambda: file.read(4096), b''):
                 md5_hash.update(chunk)
         return md5_hash.hexdigest()
+    
+    @staticmethod
+    def _error_check_bioassay_json(absolute_file_path:str) -> bool:
+        try:
+            zipfile.ZipFile(absolute_file_path, 'r')
+            return True
+        except Exception:
+            return False
         
 
 if __name__ == '__main__':
