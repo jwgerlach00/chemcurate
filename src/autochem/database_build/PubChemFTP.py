@@ -79,12 +79,12 @@ class PubChemFTP():
             print(f'Error downloading protein target data: {e}')
         
         # Download substance SDFs
-        # if verbose:
-        #     print('Downloading substance SDFs...')
-        # try:
-        #     self.download_substance_sdfs(verbose=verbose)
-        # except Exception as e:
-        #     print(f'Error downloading substance SDFs: {e}')
+        if verbose:
+            print('Downloading substance SDFs...')
+        try:
+            self.download_substance_sdfs(verbose=verbose)
+        except Exception as e:
+            print(f'Error downloading substance SDFs: {e}')
         
         # Download bioassay JSONs
         if verbose:
