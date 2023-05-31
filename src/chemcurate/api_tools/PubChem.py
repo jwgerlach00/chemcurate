@@ -3,7 +3,7 @@ import pandas as pd
 from typing import Union, List
 import time
 
-from chemcurate import __Base
+from .__Base import __Base
 
 
 # def get_full_bioassay_record(assay_id:Union[int, str]):

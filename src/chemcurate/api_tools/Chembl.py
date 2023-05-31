@@ -2,7 +2,7 @@ import requests
 import pandas as pd
 from typing import Union, List, Tuple
 
-from chemcurate import __Base
+from .__Base import __Base
 
 
 class Chembl(__Base):
@@ -105,3 +105,4 @@ if __name__ == '__main__':
     chembl = Chembl([target_id_1, target_id_2])
     print(chembl.df)
     print(len(chembl))
+    chembl.df.to_csv('chembl_sample.csv', index=False)
