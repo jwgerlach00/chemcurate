@@ -197,18 +197,21 @@ class PubChemDB(ABCChemDB):
         self.cursor.execute('DELETE FROM activity')
         self.connection.commit()
         
-        for zip_dir in tqdm(os.listdir(self.bioassay_json_dir_path)): # NOTE: Limit to just first few for testing
+        for zip_dir in tqdm([file for file in os.listdir(self.bioassay_json_dir_path) if not 
+                             file.startswith('README')]): # NOTE: Index os.listdir to limit number of files for testing
             try:
-                loader = PubChemDB._bioassay_zip_dir_loader(os.path.join(self.bioassay_json_dir_path, zip_dir), print_filename=False) # 28%
+                loader = PubChemDB._bioassay_zip_dir_loader(os.path.join(self.bioassay_json_dir_path, zip_dir),
+                                                            print_filename=False)
             except Exception as e:
-                print(f'failed to load zipdir: {zip_dir}')
+                print(f'failed to load zipdir: {zip_dir}') # likely means the zipdir is corrupted from FTP download
                 continue # skip
             
             # for bioassay_json in loader:
                 # if bioassay_json ['PC_AssaySubmit']['assay']['descr']['target'][0]['protein_accession']
             
             for bioassay_json in loader:
-                if bioassay_json['PC_AssaySubmit']['assay']['descr']['aid_source']['db']['name'].lower() == 'chembl': # skip if from chembl
+                # Skip if from chembl
+                if bioassay_json['PC_AssaySubmit']['assay']['descr']['aid_source']['db']['name'].lower() == 'chembl':
                     continue
                 
                 # target_info = PubChemDB._get_target_info_from_bioassay_json(bioassay_json)

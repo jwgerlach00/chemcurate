@@ -1,4 +1,4 @@
-from chemcurate import PubChem
+from autochem import PubChem
 from ChemiCure.chemicure import ChemiCure
 import pandas as pd
 

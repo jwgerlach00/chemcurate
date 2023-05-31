@@ -1,4 +1,4 @@
-from chemcurate import Chembl
+from autochem import Chembl
 from ChemiCure.chemicure import ChemiCure
 import pandas as pd
 

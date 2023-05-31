@@ -1,7 +1,7 @@
 import requests
 from requests.adapters import HTTPAdapter, Retry
 import re
-from chemcurate import Chembl, PubChem
+from chemcurate.api_tools import Chembl, PubChem
 from copy import deepcopy
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed

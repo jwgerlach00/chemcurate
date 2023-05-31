@@ -4,12 +4,17 @@ from ftplib import FTP
 from tqdm import tqdm
 import hashlib
 import zipfile
+import socket
+import time
 
 
 class PubChemFTP():
     def __init__(self, absolute_out_dir:str, overwrite:bool=False) -> None:
         self.__absolute_out_dir = absolute_out_dir
         self.__overwrite = overwrite
+        
+        # Path to send stuff that fails error checking
+        self.__bad_file_path = os.path.join(self.__absolute_out_dir, 'bad_files')
         
         # Make directory and set directory names to be populated
         self._make_dir()
@@ -20,17 +25,42 @@ class PubChemFTP():
         self.__bioassay_asn_metadata_ftp_directory = 'pubchem/Bioassay/'
         self.__bioassay_asn_metadata_filename = 'pcassay2.asn'
         
-        # Path to send stuff that fails error checking
-        self.__bad_file_path = os.path.join(self.__absolute_out_dir, 'bad_files')
-        
         # FTP connection details
-        ftp_host = 'ftp.ncbi.nlm.nih.gov'
+        self.__ftp_host = 'ftp.ncbi.nlm.nih.gov'
         self.__ftp_user = 'anonymous'
         self.__ftp_password = ''
         
         # Connect to the FTP server
-        self.__ftp = FTP(ftp_host)
+        self._connect(dir_name='')
+    
+    def _connect(self, dir_name:str) -> None:
+        time1 = time.time()
+        self.__ftp = FTP(self.__ftp_host)
         self.__ftp.login(self.__ftp_user, self.__ftp_password)
+        self.__ftp.cwd('/' + dir_name) # preface w/ root ('/') to clear previous cwd operations
+        print('time to connect: ', time.time() - time1) # probably not even useful
+        
+    def _ftp_read(self, local_file_path:str, server_file_path:str, base_dir_name:str,
+                  max_failed_attempts:int=5, reconnect_delay_seconds:int=25) -> None:
+        for i in range(max_failed_attempts):
+            try:
+                with open(local_file_path, 'wb') as file:
+                    self.__ftp.retrbinary(f'RETR {server_file_path}', file.write)
+                break
+            except socket.error: # re-connect to FTP server
+                print('SOCKET ERROR')
+                if i == max_failed_attempts - 1:
+                    raise Exception(f'Failed to reconnect to FTP server after {max_failed_attempts} attempts')
+                else:
+                    self._connect(base_dir_name) # this assumes the thread is paused to connect
+                    time.sleep(reconnect_delay_seconds)
+            except Exception as e:
+                if hasattr(e, 'message'):
+                    print(f'Error downloading {server_file_path}: {e.message}')
+                elif hasattr(e, 'args') and e.args:
+                    print(f'Error downloading {server_file_path}: {e.args[0]}')
+                else:
+                    print(f'Error downloading {server_file_path}: {str(e)}')
     
     def download_all(self, verbose:bool=True) -> None:
         """
@@ -49,12 +79,12 @@ class PubChemFTP():
             print(f'Error downloading protein target data: {e}')
         
         # Download substance SDFs
-        if verbose:
-            print('Downloading substance SDFs...')
-        try:
-            self.download_substance_sdfs(verbose=verbose)
-        except Exception as e:
-            print(f'Error downloading substance SDFs: {e}')
+        # if verbose:
+        #     print('Downloading substance SDFs...')
+        # try:
+        #     self.download_substance_sdfs(verbose=verbose)
+        # except Exception as e:
+        #     print(f'Error downloading substance SDFs: {e}')
         
         # Download bioassay JSONs
         if verbose:
@@ -85,8 +115,7 @@ class PubChemFTP():
         # Path to the single file that needs to be downloaded
         file_path = os.path.join(protein_target_out_dir, self.__protein_target_filename)
         
-        with open(file_path, 'wb') as file:
-            self.__ftp.retrbinary(f'RETR {self.__protein_target_filename}', file.write)
+        self._ftp_read(file_path, self.__protein_target_filename, self.__protein_target_ftp_directory)
         if verbose:
             print(f'Downloaded: {self.__protein_target_filename}')
 
@@ -114,19 +143,16 @@ class PubChemFTP():
             
             try:
                 if filename.startswith('README'): # README file, no checksum; Saved bc we still want to preserve these
-                    with open(file_path_no_extension, 'wb') as file: # README has no extension already
-                        self.__ftp.retrbinary(f'RETR {filename}', file.write)
+                    self._ftp_read(file_path_no_extension, filename, self.__substance_sdf_ftp_directory) # README has no extension already
                     continue
             
                 else: # not a README
                     # Try to download up to (max_bad_checksum_download_attempts) times if checksum fails
                     for i in range(max_bad_checksum_download_attempts):
-                        # Open and write SDF file, should overwrite if already exists in case of bad checksum
-                        with open(f'{file_path_no_extension}.sdf.gz', 'wb') as file:
-                            self.__ftp.retrbinary(f'RETR {filename}.sdf.gz', file.write)
+                        # Open and write SDF file, should overwrite if already exists in case of bad checksum                            
+                        self._ftp_read(f'{file_path_no_extension}.sdf.gz', f'{filename}.sdf.gz', self.__substance_sdf_ftp_directory)
                         # Open and write MD5 file, should overwrite if already exists in case of bad checksum
-                        with open(f'{file_path_no_extension}.sdf.gz.md5', 'wb') as file:
-                            self.__ftp.retrbinary(f'RETR {filename}.sdf.gz.md5', file.write)
+                        self._ftp_read(f'{file_path_no_extension}.sdf.gz.md5', f'{filename}.sdf.gz.md5', self.__substance_sdf_ftp_directory)
                             
                         # Check MD5
                         if self._substance_sdf_md5_checksum(filename.split('.')[0]): # just the name, no extension
@@ -138,9 +164,9 @@ class PubChemFTP():
 
                             # Move bad files away
                             os.rename(f'{file_path_no_extension}.sdf.gz', os.path.join(self.__bad_file_path,
-                                                                                       f'{filename}.sdf.gz'))
+                                                                                    f'{filename}.sdf.gz'))
                             os.rename(f'{file_path_no_extension}.sdf.gz.md5', os.path.join(self.__bad_file_path,
-                                                                                           f'{filename}.sdf.gz.md5'))
+                                                                                        f'{filename}.sdf.gz.md5'))
                         elif verbose:
                             print(f'Bad checksum for: {filename}. Trying again...')
                         
@@ -169,20 +195,18 @@ class PubChemFTP():
         filenames = self.__ftp.nlst()        
 
         # Download each file
-        for filename in (tqdm(filenames) if verbose else filenames):
+        for filename in (tqdm(filenames[397:]) if verbose else filenames):
             file_path = os.path.join(bioassay_json_out_dir, filename)
             
             try:
                 if filename.startswith('README'): # README file, no error checking; Saved bc we still want to preserve \
                     # these
-                    with open(file_path, 'wb') as file: # README has no extension already
-                        self.__ftp.retrbinary(f'RETR {filename}', file.write)
+                    self._ftp_read(file_path, filename, self.__bioassay_json_ftp_directory) # README has no extension already
                     continue
                 
                 # Try to download up to (max_bad_zip_file_attempts) times if error check fails
                 for i in range(max_bad_zip_file_attempts):
-                    with open(file_path, 'wb') as file:
-                        self.__ftp.retrbinary(f'RETR {filename}', file.write)
+                    self._ftp_read(file_path, filename, self.__bioassay_json_ftp_directory)
                     
                     # Try to open the zipped directory, if it can't open, re-download
                     if PubChemFTP._error_check_bioassay_json(file_path):
@@ -200,7 +224,12 @@ class PubChemFTP():
                 if verbose:
                     print(f'Downloaded: {filename}')
             except Exception as e:
-                print(f'Error downloading {filename}: {e}')
+                if hasattr(e, 'message'):
+                    print(f'Error downloading {filename}: {e.message}')
+                elif hasattr(e, 'args') and e.args:
+                    print(f'Error downloading {filename}: {e.args[0]}')
+                else:
+                    print(f'Error downloading {filename}: {str(e)}')
                 
     def download_bioassay_asn_metadata(self, verbose:bool=True) -> None:
         """
@@ -219,8 +248,7 @@ class PubChemFTP():
         # Path to the single file that needs to be downloaded
         file_path = os.path.join(bioassay_asn_metadata_out_dir, self.__bioassay_asn_metadata_filename)
         
-        with open(file_path, 'wb') as file:
-            self.__ftp.retrbinary(f'RETR {self.__bioassay_asn_metadata_filename}', file.write)
+        self._ftp_read(file_path, self.__bioassay_asn_metadata_filename, self.__bioassay_asn_metadata_ftp_directory)
         if verbose:
             print(f'Downloaded: {self.__bioassay_asn_metadata_filename}')
                 
