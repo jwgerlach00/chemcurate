@@ -195,7 +195,7 @@ class PubChemDB(__ABCChemDB):
         self.cursor.execute('DELETE FROM bioassay')
         self.connection.commit()
         
-        for zip_dir in tqdm([file for file in os.listdir(self.bioassay_json_dir_path)[1106:] if not 
+        for zip_dir in tqdm([file for file in os.listdir(self.bioassay_json_dir_path) if not 
                              file.startswith('README')]): # NOTE: Index os.listdir to limit number of files for testing
             
             loader = PubChemDB._bioassay_zip_dir_loader(os.path.join(self.bioassay_json_dir_path, zip_dir),
@@ -213,7 +213,7 @@ class PubChemDB(__ABCChemDB):
                 self._protein_only_add_entry_to_bioassay_table(bioassay_json)
     
     @staticmethod
-    def _bioassay_zip_dir_loader(zip_dir_path:str, print_filename:bool=False) -> Optional[Generator[dict]]:
+    def _bioassay_zip_dir_loader(zip_dir_path:str, print_filename:bool=False) -> Optional[Generator]:
         """
         Sequentially reads .json.gz files in a .zip directory into dict object. Yields one at a time.
         
