@@ -1,4 +1,4 @@
-from autochem import UniprotMapper
+from assets.old_api_uniprot_mapping_stuff import UniprotMapper
 import joblib
 import yaml
 
