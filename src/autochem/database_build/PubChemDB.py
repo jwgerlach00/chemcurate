@@ -8,13 +8,16 @@ import os
 from tqdm import tqdm
 from rdkit.Chem import PandasTools
 import naclo
-from .__ABCChemDB import __ABCChemDB
+from __ABCChemDB import __ABCChemDB
 import psycopg2
 from functools import wraps
 from rdkit import RDLogger
 from rdkit.rdBase import LogStatus as RDLogStatus
 import numpy as np
 import json
+import requests
+import time
+import logging
 
 
 def _rdkit_stfu(func):
@@ -130,6 +133,62 @@ class PubChemDB(__ABCChemDB):
         :rtype: Dict[int, str]
         """
         return copy.deepcopy(self.__unit_map)
+    
+    def uniprot_id_assay_id_map_relation(self):
+        logging.basicConfig(filename='error_log.txt', level=logging.ERROR)
+        
+        print('Rebuilding uniprot_id_assay_id_map relation...')
+        print('...clearing existing data...')
+        try:
+            self.cursor.execute('DROP TABLE BioassayToUniprot')
+            self.cursor.execute('CREATE TABLE BioassayToUniprot (bioassayID INT, uniprotID VARCHAR(20), PRIMARY KEY \
+                (bioassayID, uniprotID))')
+            self.connection.commit()
+        except Exception as e:
+            print(f'ERROR: {e}, rolling back and exiting...')
+            self.connection.rollback()
+            exit()
+        print('...getting all uniprot_ids...')
+        self.cursor.execute('SELECT uniprot_id FROM target WHERE uniprot_id IS NOT NULL')
+        uniprot_ids = self.cursor.fetchall()
+        
+        print('...getting all assay_ids')
+        for uniprot_id in uniprot_ids:
+            t_0 = time.time()
+            uniprot_id = uniprot_id[0]
+            try:
+                _url_stem = 'https://pubchem.ncbi.nlm.nih.gov/rest/pug'
+                url = f'{_url_stem}/bioassay/target/ProteinName/{uniprot_id}/aids/JSON'
+                
+                json_response = requests.get(url).json()
+                if 'IdentifierList' not in json_response:
+                    continue
+                
+                assay_ids = requests.get(url).json()['IdentifierList']['AID']
+                
+                for assay_id in assay_ids:
+                    try:
+                        self.cursor.execute('INSERT INTO BioassayToUniprot VALUES (%s, %s)', (assay_id, uniprot_id))
+                    except psycopg2.IntegrityError as e:
+                        # Check if the error is a duplicate key violation
+                        if 'duplicate key value violates unique constraint' in str(e):
+                            print(f'Skipping duplicate row: bioassay_id={assay_id}, uniprot_id={uniprot_id}')
+                        else:
+                            # For other IntegrityError cases, print the error and rollback
+                            print(f'Rolling back due to error: {e}')
+                            self.connection.rollback()
+                    else:
+                        # Commit only if there was no exception during execution
+                        self.connection.commit()
+            except Exception as e:
+                print(f'{uniprot_id}, ERROR: {e}')
+                logging.error(f"{uniprot_id}, {str(e)}")
+            else:
+                logging.error(f"{uniprot_id}")
+                
+            t_diff = time.time() - t_0
+            if t_diff < 0.20:
+                time.sleep(0.20 - t_diff)  # NOTE: Required because PubChem API has a limit of 5 requests per second
         
     def build(self):
         self.repopulate_protein_target_table() # NOTE: done
@@ -325,4 +384,4 @@ if __name__ == '__main__':
         '/Users/collabpharma/Desktop/SDF',
         '/Users/collabpharma/Desktop/protein2xrefs'
     )
-    pc_db.build()
+    pc_db.uniprot_id_assay_id_map_relation()
