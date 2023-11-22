@@ -41,7 +41,8 @@ if __name__ == '__main__':
         cursor.execute('''
             SELECT assay_data, smiles, bioassay_id
             FROM (
-                SELECT bioassay_id, json_array_elements(assay_data) AS assay_data, json_array_elements(assay_data)->>'sid' AS sid
+                SELECT bioassay_id, json_array_elements(assay_data) AS assay_data,
+                json_array_elements(assay_data)->>'sid' AS sid
                 FROM bioassay
                 JOIN temp_assay_ids ON bioassay_id = id
             ) AS extracted_sids
