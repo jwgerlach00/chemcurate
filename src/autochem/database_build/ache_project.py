@@ -39,24 +39,21 @@ if __name__ == '__main__':
         
         cursor.execute('SELECT * FROM temp_assay_ids')
         cursor.execute('''
-            SELECT assay_data, smiles
+            SELECT assay_data, smiles, bioassay_id
             FROM (
-                SELECT *
-                FROM (
-                    SELECT json_array_elements(assay_data) AS assay_data, json_array_elements(assay_data)->>'sid' AS sid
-                    FROM bioassay
-                    JOIN temp_assay_ids ON bioassay_id = id
-                ) AS extracted_sids
-                JOIN substance ON sid::integer = substance_id
-            ) AS test;
+                SELECT bioassay_id, json_array_elements(assay_data) AS assay_data, json_array_elements(assay_data)->>'sid' AS sid
+                FROM bioassay
+                JOIN temp_assay_ids ON bioassay_id = id
+            ) AS extracted_sids
+            JOIN substance ON sid::integer = substance_id
         ''')
         data = cursor.fetchall()
         cursor.execute('DROP TABLE temp_assay_ids')
         
-        assay_data = [x[0] for x in data]
-        smiles = [x[1] for x in data]
-        df = pd.DataFrame(assay_data)
-        df.insert(0, 'smiles', smiles)
+        df = pd.DataFrame([x[0] for x in data])  # assay data
+        df.insert(0, 'smiles', [x[1] for x in data])
+        df.insert(0, 'bioassay_id', [x[2] for x in data])
+        df.insert(0, 'uniprot_id', uniprot_id)
         dfs.append(df)
         
     cursor.close()
