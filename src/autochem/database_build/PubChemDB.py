@@ -153,38 +153,42 @@ class PubChemDB(__ABCChemDB):
         uniprot_ids = self.cursor.fetchall()
         
         print('...getting all assay_ids')
-        for uniprot_id in uniprot_ids:
+        for uniprot_id in uniprot_ids: # probably a problem with the single transaction lasting too long
             t_0 = time.time()
             uniprot_id = uniprot_id[0]
-            try:
-                _url_stem = 'https://pubchem.ncbi.nlm.nih.gov/rest/pug'
-                url = f'{_url_stem}/bioassay/target/ProteinName/{uniprot_id}/aids/JSON'
-                
-                json_response = requests.get(url).json()
-                if 'IdentifierList' not in json_response:
-                    continue
-                
-                assay_ids = requests.get(url).json()['IdentifierList']['AID']
-                
-                for assay_id in assay_ids:
-                    try:
-                        self.cursor.execute('INSERT INTO BioassayToUniprot VALUES (%s, %s)', (assay_id, uniprot_id))
-                    except psycopg2.IntegrityError as e:
-                        # Check if the error is a duplicate key violation
-                        if 'duplicate key value violates unique constraint' in str(e):
-                            print(f'Skipping duplicate row: bioassay_id={assay_id}, uniprot_id={uniprot_id}')
+            incomplete_flag = True
+            while incomplete_flag:
+                try:
+                    _url_stem = 'https://pubchem.ncbi.nlm.nih.gov/rest/pug'
+                    url = f'{_url_stem}/bioassay/target/ProteinName/{uniprot_id}/aids/JSON'
+                    
+                    json_response = requests.get(url).json()
+                    if 'IdentifierList' not in json_response:
+                        continue
+                    
+                    assay_ids = requests.get(url).json()['IdentifierList']['AID']
+                    
+                    for assay_id in assay_ids:
+                        try:
+                            self.cursor.execute('INSERT INTO BioassayToUniprot VALUES (%s, %s)', (assay_id, uniprot_id))
+                        except psycopg2.IntegrityError as e:
+                            # Check if the error is a duplicate key violation
+                            if 'duplicate key value violates unique constraint' in str(e):
+                                print(f'Skipping duplicate row: bioassay_id={assay_id}, uniprot_id={uniprot_id}')
+                            else:
+                                # For other IntegrityError cases, print the error and rollback
+                                print(f'Rolling back due to error: {e}')
+                                self.connection.rollback()
                         else:
-                            # For other IntegrityError cases, print the error and rollback
-                            print(f'Rolling back due to error: {e}')
-                            self.connection.rollback()
-                    else:
-                        # Commit only if there was no exception during execution
-                        self.connection.commit()
-            except Exception as e:
-                print(f'{uniprot_id}, ERROR: {e}')
-                logging.error(f"{uniprot_id}, {str(e)}")
-            else:
-                logging.error(f"{uniprot_id}")
+                            # Commit only if there was no exception during execution
+                            self.connection.commit()
+                except Exception as e:
+                    print(f'{uniprot_id}, ERROR: {e}')
+                    logging.error(f"{uniprot_id}, {str(e)}")
+                    self.connection.rollback()
+                else:
+                    logging.error(f"{uniprot_id}")
+                    incomplete_flag = False
                 
             t_diff = time.time() - t_0
             if t_diff < 0.20:

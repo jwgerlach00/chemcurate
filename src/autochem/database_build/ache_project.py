@@ -35,22 +35,29 @@ if __name__ == '__main__':
 
         # Insert data into the temporary table
         cursor.executemany('INSERT INTO temp_assay_ids VALUES (%s)', assay_ids[uniprot_id])  # only look at ache for now
-        
         connection.commit()
+        
         cursor.execute('SELECT * FROM temp_assay_ids')
-        # print(cursor.fetchall())
-        cursor.execute(
-            '''
-            SELECT json_array_elements(assay_data)
-            FROM bioassay
-            WHERE bioassay_id IN (SELECT id FROM temp_assay_ids)
-            '''
-        )
+        cursor.execute('''
+            SELECT assay_data, smiles
+            FROM (
+                SELECT *
+                FROM (
+                    SELECT json_array_elements(assay_data) AS assay_data, json_array_elements(assay_data)->>'sid' AS sid
+                    FROM bioassay
+                    JOIN temp_assay_ids ON bioassay_id = id
+                ) AS extracted_sids
+                JOIN substance ON sid::integer = substance_id
+            ) AS test;
+        ''')
         data = cursor.fetchall()
         cursor.execute('DROP TABLE temp_assay_ids')
         
-        data = [x[0] for x in data]
-        dfs.append(pd.DataFrame(data))
+        assay_data = [x[0] for x in data]
+        smiles = [x[1] for x in data]
+        df = pd.DataFrame(assay_data)
+        df.insert(0, 'smiles', smiles)
+        dfs.append(df)
         
     cursor.close()
     connection.close()
