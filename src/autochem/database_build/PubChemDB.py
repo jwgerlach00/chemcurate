@@ -34,6 +34,22 @@ def _rdkit_stfu(func):
         return returned_stuff
     return wrapper
 
+def psql_query(connection, sql: str, vars: tuple = (), testing_mode: bool = False):
+    """query the database and get back rows selected/modified"""
+    with connection.cursor() as cursor:
+        try:
+            cursor.execute(sql, vars)
+        except Exception as e:
+            print(type(e).__name__, e)
+            connection.rollback()
+            raise e
+        if cursor.description is None:
+            rows = []
+        else:
+            rows = cursor.fetchall()
+        if not testing_mode:
+            connection.commit()
+    return rows
 
 class PubChemDB(__ABCChemDB):
     def __init__(self, bioassay_json_dir_path:str, substance_sdf_dir_path:str, protein2xrefs_path:str) -> None:
@@ -138,57 +154,64 @@ class PubChemDB(__ABCChemDB):
         logging.basicConfig(filename='error_log.txt', level=logging.ERROR)
         
         print('Rebuilding uniprot_id_assay_id_map relation...')
+        
         print('...clearing existing data...')
         try:
-            self.cursor.execute('DROP TABLE BioassayToUniprot')
-            self.cursor.execute('CREATE TABLE BioassayToUniprot (bioassayID INT, uniprotID VARCHAR(20), PRIMARY KEY \
-                (bioassayID, uniprotID))')
-            self.connection.commit()
+            with self.connection.cursor() as cursor:
+                cursor.execute('DROP TABLE IF EXISTS BioassayToUniprot')
+                cursor.execute('CREATE TABLE BioassayToUniprot (bioassayID INT, uniprotID VARCHAR(20), PRIMARY KEY \
+                    (bioassayID, uniprotID))')
+                self.connection.commit()
         except Exception as e:
             print(f'ERROR: {e}, rolling back and exiting...')
             self.connection.rollback()
             exit()
+            
         print('...getting all uniprot_ids...')
-        self.cursor.execute('SELECT uniprot_id FROM target WHERE uniprot_id IS NOT NULL')
-        uniprot_ids = self.cursor.fetchall()
+        with self.connection.cursor() as cursor:
+            cursor.execute('SELECT uniprot_id FROM target WHERE uniprot_id IS NOT NULL')
+            uniprot_ids = cursor.fetchall()
         
         print('...getting all assay_ids')
         for uniprot_id in uniprot_ids: # probably a problem with the single transaction lasting too long
             t_0 = time.time()
             uniprot_id = uniprot_id[0]
-            incomplete_flag = True
-            while incomplete_flag:
-                try:
-                    _url_stem = 'https://pubchem.ncbi.nlm.nih.gov/rest/pug'
-                    url = f'{_url_stem}/bioassay/target/ProteinName/{uniprot_id}/aids/JSON'
-                    
-                    json_response = requests.get(url).json()
-                    if 'IdentifierList' not in json_response:
-                        continue
-                    
-                    assay_ids = requests.get(url).json()['IdentifierList']['AID']
-                    
-                    for assay_id in assay_ids:
-                        try:
-                            self.cursor.execute('INSERT INTO BioassayToUniprot VALUES (%s, %s)', (assay_id, uniprot_id))
-                        except psycopg2.IntegrityError as e:
-                            # Check if the error is a duplicate key violation
-                            if 'duplicate key value violates unique constraint' in str(e):
-                                print(f'Skipping duplicate row: bioassay_id={assay_id}, uniprot_id={uniprot_id}')
+            try:
+                _url_stem = 'https://pubchem.ncbi.nlm.nih.gov/rest/pug'
+                url = f'{_url_stem}/bioassay/target/ProteinName/{uniprot_id}/aids/JSON'
+                
+                json_response = requests.get(url).json()
+                if 'IdentifierList' not in json_response:
+                    continue
+                
+                assay_ids = requests.get(url).json()['IdentifierList']['AID']
+                
+                for assay_id in assay_ids:
+                    incomplete_flag = True
+                    while incomplete_flag:
+                        with self.connection.cursor() as cursor:
+                            try:
+                                cursor.execute('INSERT INTO BioassayToUniprot VALUES (%s, %s)', (assay_id, uniprot_id))
+                            except psycopg2.IntegrityError as e:
+                                # Check if the error is a duplicate key violation
+                                if 'duplicate key value violates unique constraint' in str(e):
+                                    print(f'Skipping duplicate row: bioassay_id={assay_id}, uniprot_id={uniprot_id}')
+                                else:
+                                    # For other IntegrityError cases, print the error and rollback
+                                    print(f'Rolling back due to error: {e}')
+                                    self.connection.rollback()
                             else:
-                                # For other IntegrityError cases, print the error and rollback
-                                print(f'Rolling back due to error: {e}')
-                                self.connection.rollback()
-                        else:
-                            # Commit only if there was no exception during execution
-                            self.connection.commit()
-                except Exception as e:
-                    print(f'{uniprot_id}, ERROR: {e}')
-                    logging.error(f"{uniprot_id}, {str(e)}")
-                    self.connection.rollback()
-                else:
-                    logging.error(f"{uniprot_id}")
-                    incomplete_flag = False
+                                # Commit only if there was no exception during execution
+                                self.connection.commit()
+                                incomplete_flag = False
+                            
+            except Exception as e:
+                print(f'{uniprot_id}, ERROR: {e}')
+                logging.error(f"{uniprot_id}, {str(e)}")
+                self.connection.rollback()
+            else:
+                logging.error(f"{uniprot_id}")
+                    
                 
             t_diff = time.time() - t_0
             if t_diff < 0.20:
