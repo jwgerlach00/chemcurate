@@ -169,7 +169,7 @@ class PubChemDB(__ABCChemDB):
             
         print('...getting all uniprot_ids...')
         with self.connection.cursor() as cursor:
-            cursor.execute('SELECT uniprot_id FROM target WHERE uniprot_id IS NOT NULL')
+            cursor.execute('SELECT DISTINCT uniprot_id FROM target WHERE uniprot_id IS NOT NULL')
             uniprot_ids = cursor.fetchall()
         
         print('...getting all assay_ids')
@@ -194,12 +194,12 @@ class PubChemDB(__ABCChemDB):
                                 cursor.execute('INSERT INTO BioassayToUniprot VALUES (%s, %s)', (assay_id, uniprot_id))
                             except psycopg2.IntegrityError as e:
                                 # Check if the error is a duplicate key violation
-                                if 'duplicate key value violates unique constraint' in str(e):
-                                    print(f'Skipping duplicate row: bioassay_id={assay_id}, uniprot_id={uniprot_id}')
-                                else:
-                                    # For other IntegrityError cases, print the error and rollback
-                                    print(f'Rolling back due to error: {e}')
-                                    self.connection.rollback()
+                                # if 'duplicate key value violates unique constraint' in str(e):
+                                #     print(f'Skipping duplicate row: bioassay_id={assay_id}, uniprot_id={uniprot_id}')
+                                # else:
+                                # For other IntegrityError cases, print the error and rollback
+                                print(f'Rolling back due to error: {e}')
+                                self.connection.rollback()
                             else:
                                 # Commit only if there was no exception during execution
                                 self.connection.commit()
@@ -234,12 +234,33 @@ class PubChemDB(__ABCChemDB):
         
         # There are some duplicate protein accessions w/ different GeneIDs, this won't work as protein_accession is \
             # the primary key
+        # NOTE: FIX THIS #####
+        df = df.drop_duplicates(subset=['ProteinAccession'], keep='first')
+        # NOTE: FIX THIS #####
+        
+        # Insert each row into table
+        for _, row in df.iterrows():
+            self.cursor.execute('INSERT INTO target (protein_accession, gene_id, ref_seq, uniprot_id) VALUES (%s, %s)',
+                                (row['ProteinAccession'], row['GeneID'], row['RefSeq'], row['UniProt']))
+
+        self.connection.commit()
+        
+        
+    def test_repopulate_protein_target_table(self):        
+        df = pd.read_csv(self.protein2xrefs_path, delimiter='\t')
+        
+        # Replace w/ None instead of NaN because NaN is a string while None is recognized as NULL
+        df = df.replace({np.nan: None})
+        
+        # There are some duplicate protein accessions w/ different GeneIDs, this won't work as protein_accession is \
+            # the primary key
+        # NOTE: FIX THIS
         df = df.drop_duplicates(subset=['ProteinAccession'], keep='first')
         
         # Insert each row into table
         for _, row in df.iterrows():
-            self.cursor.execute('INSERT INTO target (protein_accession, uniprot_id) VALUES (%s, %s)',
-                                (row['ProteinAccession'], row['UniProt']))
+            self.cursor.execute('UPDATE target SET gene_id = %s, ref_seq = %s, uniprot_id = %s WHERE protein_accession = %s',
+                                (row['GeneID'], row['RefSeq'], row['UniProt'], row['ProteinAccession']))
 
         self.connection.commit()
         
@@ -279,6 +300,14 @@ class PubChemDB(__ABCChemDB):
     def repopulate_bioassay_table(self, protein_only:bool=True) -> None:
         ########## Clear existing data to avoid duplication ##########
         self.cursor.execute('DELETE FROM bioassay')
+        
+        '''CREATE TABLE bioassay (
+            bioassay_id INT PRIMARY KEY,
+            gene_id INT,
+            protein_accession TEXT,  -- was foreign key referencing target.protein_accession
+            assay_data JSON
+        );'''
+        
         self.connection.commit()
         
         for zip_dir in tqdm([file for file in os.listdir(self.bioassay_json_dir_path) if not 
@@ -338,6 +367,13 @@ class PubChemDB(__ABCChemDB):
     def _protein_only_add_entry_to_bioassay_table(self, json_bioassay:dict) -> None:
         '''TODO: fails if not protein only'''
         bioassay_id = json_bioassay['PC_AssaySubmit']['assay']['descr']['aid']['id']
+        gene_id = None
+        if 'xref' in json_bioassay['PC_AssaySubmit']['assay']['descr']:
+            for xref in json_bioassay['PC_AssaySubmit']['assay']['descr']['xref']:
+                if 'gene' in xref['xref']:
+                    gene_id = xref['xref']['gene']
+        else:
+            print(bioassay_id, 'no xref for gene_id')
         
         ########## Determine protein accession from bioassay target info ##########
         target_info = PubChemDB._get_bioassay_target_info_if_exists(json_bioassay)
@@ -357,8 +393,8 @@ class PubChemDB(__ABCChemDB):
         
         ########## Store in database ##########
         try:
-            self.cursor.execute('INSERT INTO bioassay (bioassay_id, protein_accession, assay_data) VALUES (%s, %s, %s)',
-                                (bioassay_id, protein_accession, json.dumps(formatted_bioassay_data)))
+            self.cursor.execute('INSERT INTO bioassay (bioassay_id, gene_id, protein_accession, assay_data) VALUES (%s, %s, %s, %s)',
+                                (bioassay_id, gene_id, protein_accession, json.dumps(formatted_bioassay_data)))
         except psycopg2.errors.ForeignKeyViolation: # the protein accession is not in the protein table
             self.connection.rollback() # rollback to previous commit due to foreign key violation
             self.cursor.execute('INSERT INTO bioassay (bioassay_id) VALUES (%s)', (bioassay_id,))
@@ -404,11 +440,72 @@ class PubChemDB(__ABCChemDB):
 
             reformatted_data.append(sid_entry)
         return reformatted_data
+    
+    def testing(self):        
+        df = pd.read_csv('/Users/collabpharma/Downloads/Aid2GeneidAccessionUniProt(1)', delimiter='\t')
+        
+        print(df.head())
+        
+        df = df.replace({np.nan: None})
+        
+        
+        '''
+        CREATE TABLE target_mapping (
+            bioassay_id INT,
+            gene_id INT,
+            accession TEXT,
+            uniprot_id TEXT
+        )
+        '''
+        
+        # There are some duplicate protein accessions w/ different GeneIDs, this won't work as protein_accession is \
+            # the primary key
+        # NOTE: FIX THIS #####
+        # df = df.drop_duplicates(subset=['ProteinAccession'], keep='first')
+        # NOTE: FIX THIS #####
+        
+        # Insert each row into table
+        for _, row in df.iterrows():
+            self.cursor.execute('INSERT INTO target_mapping (bioassay_id, gene_id, accession, uniprot_id) VALUES (%s, %s, %s, %s)',
+                                (row['AID'], row['Geneid'], row['Accession'], row['UniProtKB_AC/ID']))
+
+        self.connection.commit()
+        
+    def gene_mapping(self):
+        df = pd.read_csv('/Users/collabpharma/Downloads/Aid2GeneidAccessionUniProt(1)', delimiter='\t')
+        df = df.replace({np.nan: None})
+        
+        """_summary_
+        CREATE TABLE gene_mapping (
+            gene_id INT PRIMARY KEY,
+            uniprot_id TEXT
+        )
+        """
+        
+        # print(df.iterrows().next())
+        # values_list = [(row['Geneid'], row['UniProtKB_AC/ID']) for _, row in df.iterrows()]
+
+        # Use executemany to insert multiple rows at once
+        with self.connection.cursor() as cursor:
+            for _, row in df.iterrows():
+                try:
+                    cursor.execute('INSERT INTO gene_mapping VALUES (%s, %s, %s, %s)',
+                                   (row['AID'], row['Geneid'], row['Accession'], row['UniProtKB_AC/ID']))
+                except psycopg2.errors.UniqueViolation:
+                    self.connection.rollback()
+            self.connection.commit()
+        
 
 if __name__ == '__main__':
     pc_db = PubChemDB(
-        '/Users/collabpharma/Desktop/JSON',
+        '/Users/collabpharma/Gerlach/PycharmProjects/chemcurate/src/autochem/database_build/pubchem_ftp_data/pubchem/Bioassay/JSON',
         '/Users/collabpharma/Desktop/SDF',
         '/Users/collabpharma/Desktop/protein2xrefs'
     )
-    pc_db.uniprot_id_assay_id_map_relation()
+    # pc_db.uniprot_id_assay_id_map_relation()
+    # pc_db.test_repopulate_protein_target_table(
+    # pc_db.gene_mapping()
+    pc_db.repopulate_bioassay_table()
+    
+    # smiles_df = pd.read_csv('/Users/collabpharma/Downloads/Sid2CidSMILES', delimiter='\t')
+    # print(sum(pd.isna(smiles_df['Isomeric SMILES'])))
